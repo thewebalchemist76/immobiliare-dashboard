@@ -20,7 +20,12 @@ export default function App() {
   }, []);
 
   const signIn = async (email) => {
-    await supabase.auth.signInWithOtp({ email });
+    await supabase.auth.signInWithOtp({
+      email,
+      options: {
+        emailRedirectTo: window.location.origin,
+      },
+    });
   };
 
   const signOut = async () => {
@@ -102,7 +107,7 @@ export default function App() {
       <ul>
         {listings.map((l) => (
           <li key={l.id}>
-            <a href={l.url} target="_blank">
+            <a href={l.url} target="_blank" rel="noreferrer">
               {l.title}
             </a>{" "}
             – {l.city} ({l.province}) – €{l.price}
