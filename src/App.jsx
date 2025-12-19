@@ -81,6 +81,7 @@ export default function App() {
             body: JSON.stringify({
               municipality: e.target.city.value,
               operation: e.target.operation.value,
+              user_id: session.user.id,
               min_price: Number(e.target.min_price.value) || null,
               max_price: Number(e.target.max_price.value) || null,
               max_items: 2,
