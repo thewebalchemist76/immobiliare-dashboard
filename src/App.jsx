@@ -6,6 +6,8 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [listings, setListings] = useState([]);
   const [loading, setLoading] = useState(false);
+  // 👇 AGGIUNGI QUESTO
+  console.log("BACKEND URL =", import.meta.env.VITE_BACKEND_URL);
 
   // ===== AUTH =====
   useEffect(() => {
