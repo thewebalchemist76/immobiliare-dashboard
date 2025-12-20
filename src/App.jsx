@@ -31,15 +31,22 @@ export default function App() {
     await supabase.auth.signOut();
   };
 
-  // ===== LOAD RESULTS =====
-  const loadListings = async () => {
-    const { data } = await supabase
-      .from("listings")
-      .select("id,title,city,province,price,url")
-      .order("id", { ascending: false })
-      .limit(50);
+  // ===== LOAD RESULTS (PER SEARCH) =====
+  const loadListings = async (searchId) => {
+    if (!searchId) return;
 
-    if (data) setListings(data);
+    setLoading(true);
+
+    const { data, error } = await supabase
+      .from("search_results")
+      .select("listings(id,title,city,province,price,url)")
+      .eq("search_id", searchId);
+
+    if (!error && data) {
+      setListings(data.map((r) => r.listings));
+    }
+
+    setLoading(false);
   };
 
   // ===== LOGIN =====
@@ -80,32 +87,35 @@ export default function App() {
 
             const f = e.target;
 
-            await fetch(`${import.meta.env.VITE_BACKEND_URL}/search`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                location_query: f.location_query.value,
-                operation: f.operation.value,
-                min_price: Number(f.min_price.value) || null,
-                max_price: Number(f.max_price.value) || null,
-                min_rooms: Number(f.min_rooms.value) || null,
-                max_rooms: Number(f.max_rooms.value) || null,
-                min_size: Number(f.min_size.value) || null,
-                max_size: Number(f.max_size.value) || null,
-                garden: f.garden.value,
-                terrace: f.terrace.checked,
-                balcony: f.balcony.checked,
-                lift: f.lift.checked,
-                furnished: f.furnished.checked,
-                pool: f.pool.checked,
-                exclude_auctions: f.exclude_auctions.checked,
-                max_items: 2,
-                user_id: session.user.id,
-              }),
-            });
+            const res = await fetch(
+              `${import.meta.env.VITE_BACKEND_URL}/search`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  location_query: f.location_query.value,
+                  operation: f.operation.value,
+                  min_price: Number(f.min_price.value) || null,
+                  max_price: Number(f.max_price.value) || null,
+                  min_rooms: Number(f.min_rooms.value) || null,
+                  max_rooms: Number(f.max_rooms.value) || null,
+                  min_size: Number(f.min_size.value) || null,
+                  max_size: Number(f.max_size.value) || null,
+                  garden: f.garden.value,
+                  terrace: f.terrace.checked,
+                  balcony: f.balcony.checked,
+                  lift: f.lift.checked,
+                  furnished: f.furnished.checked,
+                  pool: f.pool.checked,
+                  exclude_auctions: f.exclude_auctions.checked,
+                  max_items: 2,
+                  user_id: session.user.id,
+                }),
+              }
+            );
 
-            await loadListings();
-            setLoading(false);
+            const out = await res.json();
+            await loadListings(out.searchId);
           }}
         >
           <div className="search-grid">
