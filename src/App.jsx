@@ -6,8 +6,7 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [listings, setListings] = useState([]);
   const [loading, setLoading] = useState(false);
-  // 👇 AGGIUNGI QUESTO
-  console.log("BACKEND URL =", import.meta.env.VITE_BACKEND_URL);
+  const [currentSearchId, setCurrentSearchId] = useState(null);
 
   // ===== AUTH =====
   useEffect(() => {
@@ -33,22 +32,18 @@ export default function App() {
     await supabase.auth.signOut();
   };
 
-  // ===== LOAD RESULTS (PER SEARCH) =====
+  // ===== LOAD RESULTS (POLLING) =====
   const loadListings = async (searchId) => {
-    if (!searchId) return;
-
-    setLoading(true);
-
     const { data, error } = await supabase
       .from("search_results")
       .select("listings(id,title,city,province,price,url)")
       .eq("search_id", searchId);
 
-    if (!error && data) {
+    if (!error && data && data.length > 0) {
       setListings(data.map((r) => r.listings));
+      return true;
     }
-
-    setLoading(false);
+    return false;
   };
 
   // ===== LOGIN =====
@@ -86,6 +81,7 @@ export default function App() {
           onSubmit={async (e) => {
             e.preventDefault();
             setLoading(true);
+            setListings([]);
 
             const f = e.target;
 
@@ -117,11 +113,20 @@ export default function App() {
             );
 
             const out = await res.json();
-            await loadListings(out.searchId);
+            setCurrentSearchId(out.searchId);
+
+            // 🔁 polling ogni 5 secondi
+            const interval = setInterval(async () => {
+              const done = await loadListings(out.searchId);
+              if (done) {
+                clearInterval(interval);
+                setLoading(false);
+              }
+            }, 5000);
           }}
         >
           <div className="search-grid">
-            <input name="location_query" placeholder="Città o zona" />
+            <input name="location_query" placeholder="Città o zona" required />
 
             <select name="operation">
               <option value="vendita">Vendita</option>
@@ -153,7 +158,9 @@ export default function App() {
             <label><input type="checkbox" name="exclude_auctions" /> Escludi aste</label>
           </div>
 
-          <button>Cerca</button>
+          <button disabled={loading}>
+            {loading ? "Ricerca in corso…" : "Cerca"}
+          </button>
         </form>
       </div>
 
@@ -161,7 +168,7 @@ export default function App() {
       <div className="card">
         <h3>Risultati</h3>
 
-        {loading && <p className="muted">Caricamento…</p>}
+        {loading && <p className="muted">Attendo risultati da Apify…</p>}
 
         <ul className="results">
           {listings.map((l) => (
