@@ -8,9 +8,9 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [currentSearchId, setCurrentSearchId] = useState(null);
 
-  // 🔹 nuove state
   const [view, setView] = useState("search"); // search | history
   const [searches, setSearches] = useState([]);
+  const [selectedSearchId, setSelectedSearchId] = useState("");
 
   // ===== AUTH =====
   useEffect(() => {
@@ -79,7 +79,6 @@ export default function App() {
     );
   }
 
-  // ===== DASHBOARD =====
   return (
     <div>
       {/* HEADER */}
@@ -87,7 +86,7 @@ export default function App() {
         <h2>Dashboard</h2>
         <p className="muted">Loggato come {session.user.email}</p>
 
-        <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+        <div style={{ display: "flex", gap: 12, marginTop: 12 }}>
           <button onClick={() => setView("search")}>Nuova ricerca</button>
           <button
             onClick={async () => {
@@ -160,21 +159,16 @@ export default function App() {
             >
               <div className="search-grid">
                 <input name="location_query" placeholder="Città o zona" required />
-
                 <select name="operation">
                   <option value="vendita">Vendita</option>
                   <option value="affitto">Affitto</option>
                 </select>
-
                 <input name="min_price" placeholder="Prezzo min" type="number" />
                 <input name="max_price" placeholder="Prezzo max" type="number" />
-
                 <input name="min_rooms" placeholder="Locali min" type="number" />
                 <input name="max_rooms" placeholder="Locali max" type="number" />
-
                 <input name="min_size" placeholder="Mq min" type="number" />
                 <input name="max_size" placeholder="Mq max" type="number" />
-
                 <select name="garden">
                   <option value="Indifferente">Giardino indifferente</option>
                   <option value="privato">Giardino privato</option>
@@ -197,12 +191,9 @@ export default function App() {
             </form>
           </div>
 
-          {/* RESULTS */}
           <div className="card">
             <h3>Risultati</h3>
-
             {loading && <p className="muted">Attendo risultati da Apify…</p>}
-
             <ul className="results">
               {listings.map((l) => (
                 <li key={l.id}>
@@ -217,30 +208,34 @@ export default function App() {
         </>
       )}
 
-      {/* HISTORY */}
+      {/* HISTORY (DROPDOWN) */}
       {view === "history" && (
         <div className="card">
           <h3>Le mie ricerche</h3>
 
-          <ul className="results">
+          <select
+            value={selectedSearchId}
+            onChange={async (e) => {
+              const id = e.target.value;
+              setSelectedSearchId(id);
+              if (!id) return;
+
+              setLoading(true);
+              setListings([]);
+              await loadListings(id);
+              setCurrentSearchId(id);
+              setView("search");
+              setLoading(false);
+            }}
+          >
+            <option value="">Seleziona una ricerca…</option>
             {searches.map((s) => (
-              <li key={s.id}>
-                <button
-                  onClick={async () => {
-                    setLoading(true);
-                    setListings([]);
-                    await loadListings(s.id);
-                    setCurrentSearchId(s.id);
-                    setView("search");
-                    setLoading(false);
-                  }}
-                >
-                  {new Date(s.created_at).toLocaleString()} –{" "}
-                  {s.query.location_query} – {s.query.operation}
-                </button>
-              </li>
+              <option key={s.id} value={s.id}>
+                {new Date(s.created_at).toLocaleString()} –{" "}
+                {s.query.location_query} – {s.query.operation}
+              </option>
             ))}
-          </ul>
+          </select>
         </div>
       )}
 
