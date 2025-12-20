@@ -121,6 +121,7 @@ export default function App() {
                     body: JSON.stringify({
                       location_query: f.location_query.value,
                       operation: f.operation.value,
+                      order: f.order.value, // 👈 NUOVO
                       min_price: Number(f.min_price.value) || null,
                       max_price: Number(f.max_price.value) || null,
                       min_rooms: Number(f.min_rooms.value) || null,
@@ -159,16 +160,27 @@ export default function App() {
             >
               <div className="search-grid">
                 <input name="location_query" placeholder="Città o zona" required />
+
                 <select name="operation">
                   <option value="vendita">Vendita</option>
                   <option value="affitto">Affitto</option>
                 </select>
+
+                {/* 👇 ORDINAMENTO */}
+                <select name="order">
+                  <option value="recent">Più recenti</option>
+                  <option value="oldest">Meno recenti</option>
+                </select>
+
                 <input name="min_price" placeholder="Prezzo min" type="number" />
                 <input name="max_price" placeholder="Prezzo max" type="number" />
+
                 <input name="min_rooms" placeholder="Locali min" type="number" />
                 <input name="max_rooms" placeholder="Locali max" type="number" />
+
                 <input name="min_size" placeholder="Mq min" type="number" />
                 <input name="max_size" placeholder="Mq max" type="number" />
+
                 <select name="garden">
                   <option value="Indifferente">Giardino indifferente</option>
                   <option value="privato">Giardino privato</option>
