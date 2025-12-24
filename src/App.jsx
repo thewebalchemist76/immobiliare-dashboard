@@ -120,7 +120,6 @@ export default function App() {
       {view === "search" && (
         <div className="card">
           <h3>Ricerca</h3>
-
           <p className="muted">Zona assegnata all’agenzia</p>
 
           <button
@@ -138,17 +137,10 @@ export default function App() {
                 }
               );
 
-                  // ⬇️ AGGIUNGI QUESTO
-              await loadMyRuns();
-              await loadAgencyListings();
-
-              setLoading(false);
-            }}
-
-              // aspettiamo Apify
+              // ⏳ aspettiamo Apify
               setTimeout(async () => {
                 await loadAgencyListings();
-                await loadMyRuns(); // ✅ QUESTA ERA LA PARTE MANCANTE
+                await loadMyRuns();
                 setLoading(false);
               }, 8000);
             }}
