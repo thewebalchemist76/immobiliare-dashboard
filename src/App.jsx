@@ -67,6 +67,8 @@ export default function App() {
 
   // ===== LOAD MY RUNS =====
   const loadMyRuns = async () => {
+    if (!agency) return;
+
     const { data } = await supabase
       .from("agency_runs")
       .select("id, created_at, new_listings_count")
@@ -119,9 +121,7 @@ export default function App() {
         <div className="card">
           <h3>Ricerca</h3>
 
-          <p className="muted">
-            Zona assegnata all’agenzia
-          </p>
+          <p className="muted">Zona assegnata all’agenzia</p>
 
           <button
             disabled={loading || !agency}
@@ -141,6 +141,7 @@ export default function App() {
               // aspettiamo Apify
               setTimeout(async () => {
                 await loadAgencyListings();
+                await loadMyRuns(); // ✅ QUESTA ERA LA PARTE MANCANTE
                 setLoading(false);
               }, 8000);
             }}
