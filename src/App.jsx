@@ -138,6 +138,13 @@ export default function App() {
                 }
               );
 
+                  // ⬇️ AGGIUNGI QUESTO
+              await loadMyRuns();
+              await loadAgencyListings();
+
+              setLoading(false);
+            }}
+
               // aspettiamo Apify
               setTimeout(async () => {
                 await loadAgencyListings();
