@@ -4,6 +4,8 @@ import "./App.css";
 
 export default function App() {
   const [session, setSession] = useState(null);
+  const [agency, setAgency] = useState(null);
+
   const [listings, setListings] = useState([]);
   const [loading, setLoading] = useState(false);
 
@@ -24,6 +26,18 @@ export default function App() {
     return () => data.subscription.unsubscribe();
   }, []);
 
+  // ===== LOAD AGENCY =====
+  useEffect(() => {
+    if (!session) return;
+
+    supabase
+      .from("agencies")
+      .select("*")
+      .eq("user_id", session.user.id)
+      .single()
+      .then(({ data }) => setAgency(data));
+  }, [session]);
+
   const signIn = async (email) => {
     await supabase.auth.signInWithOtp({
       email,
@@ -35,24 +49,31 @@ export default function App() {
     await supabase.auth.signOut();
   };
 
-  // ===== LOAD MY RUNS (agency_runs) =====
+  // ===== LOAD AGENCY LISTINGS =====
+  const loadAgencyListings = async () => {
+    if (!agency) return;
+
+    const { data } = await supabase
+      .from("agency_listings")
+      .select("listings(id,title,city,province,price,url)")
+      .eq("agency_id", agency.id)
+      .order("created_at", { ascending: false })
+      .limit(50);
+
+    if (data) {
+      setListings(data.map((r) => r.listings));
+    }
+  };
+
+  // ===== LOAD MY RUNS =====
   const loadMyRuns = async () => {
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from("agency_runs")
-      .select(
-        `
-        id,
-        created_at,
-        new_listings_count,
-        agencies (
-          name
-        )
-      `
-      )
-      .eq("agencies.user_id", session.user.id)
+      .select("id, created_at, new_listings_count")
+      .eq("agency_id", agency.id)
       .order("created_at", { ascending: false });
 
-    if (!error) setRuns(data || []);
+    setRuns(data || []);
   };
 
   // ===== LOGIN =====
@@ -93,13 +114,54 @@ export default function App() {
         </div>
       </div>
 
-      {/* SEARCH (placeholder) */}
+      {/* SEARCH */}
       {view === "search" && (
         <div className="card">
           <h3>Ricerca</h3>
+
           <p className="muted">
-            La ricerca viene avviata dal pulsante “Avvia ricerca”.
+            Zona assegnata all’agenzia
           </p>
+
+          <button
+            disabled={loading || !agency}
+            onClick={async () => {
+              setLoading(true);
+              setListings([]);
+
+              await fetch(
+                `${import.meta.env.VITE_BACKEND_URL}/run-agency`,
+                {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ agency_id: agency.id }),
+                }
+              );
+
+              // aspettiamo Apify
+              setTimeout(async () => {
+                await loadAgencyListings();
+                setLoading(false);
+              }, 8000);
+            }}
+          >
+            {loading ? "Ricerca in corso…" : "Avvia ricerca"}
+          </button>
+
+          <h3 style={{ marginTop: 24 }}>Risultati</h3>
+
+          {loading && <p className="muted">Attendo risultati…</p>}
+
+          <ul className="results">
+            {listings.map((l) => (
+              <li key={l.id}>
+                <a href={l.url} target="_blank" rel="noreferrer">
+                  {l.title}
+                </a>{" "}
+                – {l.city} ({l.province}) – €{l.price}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
