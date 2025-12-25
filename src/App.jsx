@@ -1,28 +1,24 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { supabase } from "./supabase";
 import "./App.css";
 
-const PAGE_SIZE = 20;
+const POLL_INTERVAL = 5000;
 
 export default function App() {
   const [session, setSession] = useState(null);
   const [agency, setAgency] = useState(null);
 
-  const [view, setView] = useState("dashboard");
+  const [view, setView] = useState("dashboard"); // dashboard | history
   const [runs, setRuns] = useState([]);
-  const [selectedRunId, setSelectedRunId] = useState("");
   const [selectedRun, setSelectedRun] = useState(null);
 
   const [listings, setListings] = useState([]);
-  const [page, setPage] = useState(0);
-
-  const [priceMin, setPriceMin] = useState("");
-  const [priceMax, setPriceMax] = useState("");
-
   const [loadingRun, setLoadingRun] = useState(false);
   const [loadingListings, setLoadingListings] = useState(false);
 
-  // ================= AUTH =================
+  const pollRef = useRef(null);
+
+  // ===== AUTH =====
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
@@ -35,7 +31,7 @@ export default function App() {
     return () => data.subscription.unsubscribe();
   }, []);
 
-  // ================= LOAD AGENCY =================
+  // ===== LOAD AGENCY =====
   useEffect(() => {
     if (!session) return;
 
@@ -47,13 +43,10 @@ export default function App() {
       .then(({ data }) => setAgency(data));
   }, [session]);
 
-  // ================= LOAD RUNS (FIX CRITICO) =================
-  useEffect(() => {
+  // ===== LOAD RUNS =====
+  const loadRuns = async () => {
     if (!agency) return;
-    loadMyRuns();
-  }, [agency]);
 
-  const loadMyRuns = async () => {
     const { data } = await supabase
       .from("agency_runs")
       .select("id, created_at, run_completed_at, new_listings_count")
@@ -61,28 +54,64 @@ export default function App() {
       .order("created_at", { ascending: false });
 
     setRuns(data || []);
+    return data || [];
   };
 
-  // ================= LOAD LISTINGS =================
-  const loadListingsForRun = async (runId, pageIndex = 0) => {
-    setLoadingListings(true);
-    setListings([]);
-    setPage(pageIndex);
+  // ===== POLLING =====
+  const startPolling = () => {
+    stopPolling();
+    pollRef.current = setInterval(async () => {
+      const updatedRuns = await loadRuns();
+      const stillRunning = updatedRuns.some(
+        (r) => r.run_completed_at === null
+      );
 
-    const { data: run } = await supabase
-      .from("agency_runs")
-      .select("id, run_completed_at")
-      .eq("id", runId)
-      .single();
+      if (!stillRunning) {
+        stopPolling();
+        setLoadingRun(false);
+      }
+    }, POLL_INTERVAL);
+  };
 
+  const stopPolling = () => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  };
+
+  // ===== START RUN =====
+  const startRun = async () => {
+    if (!agency) return;
+
+    setLoadingRun(true);
+    setView("dashboard");
+
+    await fetch(
+      "https://immobiliare-backend.onrender.com/run-agency",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agency_id: agency.id }),
+      }
+    );
+
+    await loadRuns();
+    startPolling();
+  };
+
+  // ===== LOAD LISTINGS =====
+  const loadListingsForRun = async (run) => {
     setSelectedRun(run);
+    setListings([]);
 
-    if (!run?.run_completed_at) {
-      setLoadingListings(false);
+    if (!run.run_completed_at) {
       return;
     }
 
-    let query = supabase
+    setLoadingListings(true);
+
+    const { data } = await supabase
       .from("agency_run_listings")
       .select(
         `
@@ -96,39 +125,22 @@ export default function App() {
         )
       `
       )
-      .eq("run_id", runId)
-      .range(
-        pageIndex * PAGE_SIZE,
-        pageIndex * PAGE_SIZE + PAGE_SIZE - 1
-      );
+      .eq("run_id", run.id)
+      .order("listings.price", { ascending: true });
 
-    if (priceMin) query = query.gte("listings.price", Number(priceMin));
-    if (priceMax) query = query.lte("listings.price", Number(priceMax));
+    if (data) {
+      setListings(data.map((r) => r.listings));
+    }
 
-    const { data } = await query;
-    setListings(data ? data.map((r) => r.listings) : []);
     setLoadingListings(false);
   };
 
-  // ================= RUN AGENCY =================
-  const startRun = async () => {
-    setLoadingRun(true);
-
-    await fetch(`${import.meta.env.VITE_BACKEND_URL}/run-agency`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ agency_id: agency.id }),
-    });
-
-    await loadMyRuns();
-    setLoadingRun(false);
-  };
-
   const signOut = async () => {
+    stopPolling();
     await supabase.auth.signOut();
   };
 
-  // ================= LOGIN =================
+  // ===== LOGIN =====
   if (!session) {
     return (
       <div className="card">
@@ -142,7 +154,7 @@ export default function App() {
             });
           }}
         >
-          <input name="email" />
+          <input name="email" placeholder="email" />
           <button>Invia magic link</button>
         </form>
       </div>
@@ -151,59 +163,88 @@ export default function App() {
 
   return (
     <div>
+      {/* HEADER */}
       <div className="card">
         <h2>Dashboard</h2>
         <p className="muted">{session.user.email}</p>
 
         <div style={{ display: "flex", gap: 12 }}>
           <button onClick={() => setView("dashboard")}>Dashboard</button>
-          <button onClick={() => setView("history")}>Le mie ricerche</button>
+          <button
+            onClick={async () => {
+              await loadRuns();
+              setView("history");
+            }}
+          >
+            Le mie ricerche
+          </button>
         </div>
       </div>
 
+      {/* DASHBOARD */}
       {view === "dashboard" && (
         <div className="card">
           <h3>Avvia ricerca</h3>
 
           <button onClick={startRun} disabled={loadingRun}>
-            {loadingRun ? "Ricerca in corso…" : "Avvia ricerca"}
+            Avvia ricerca
           </button>
 
+          {loadingRun && (
+            <p className="muted">Ricerca in corso…</p>
+          )}
+
           {runs[0] && (
-            <p className="muted" style={{ marginTop: 12 }}>
+            <p className="muted">
               Ultima ricerca:{" "}
               {new Date(runs[0].created_at).toLocaleString()} –{" "}
-              {runs[0].new_listings_count} nuovi annunci
+              {runs[0].run_completed_at
+                ? `${runs[0].new_listings_count} nuovi annunci`
+                : "elaborazione in corso"}
             </p>
           )}
         </div>
       )}
 
+      {/* HISTORY */}
       {view === "history" && (
         <div className="card">
           <h3>Le mie ricerche</h3>
 
           <select
-            value={selectedRunId}
+            value={selectedRun?.id || ""}
             onChange={(e) => {
-              setSelectedRunId(e.target.value);
-              loadListingsForRun(e.target.value, 0);
+              const run = runs.find((r) => r.id === e.target.value);
+              if (run) loadListingsForRun(run);
             }}
           >
             <option value="">Seleziona una ricerca…</option>
             {runs.map((r) => (
               <option key={r.id} value={r.id}>
                 {new Date(r.created_at).toLocaleString()} –{" "}
-                {r.new_listings_count} nuovi annunci
+                {r.run_completed_at
+                  ? `${r.new_listings_count} nuovi annunci`
+                  : "elaborazione in corso…"}
               </option>
             ))}
           </select>
 
           {selectedRun && !selectedRun.run_completed_at && (
-            <p className="muted" style={{ marginTop: 12 }}>
-              ⏳ Elaborazione annunci in corso…
-            </p>
+            <p className="muted">Elaborazione annunci in corso…</p>
           )}
+
+          {loadingListings && <p className="muted">Caricamento annunci…</p>}
+
+          <ul className="results">
+            {listings.map((l) => (
+              <li key={l.id}>
+                <a href={l.url} target="_blank" rel="noreferrer">
+                  {l.title}
+                </a>{" "}
+                – {l.city} ({l.province}) – €{l.price}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
