@@ -5,12 +5,15 @@ import "./App.css";
 export default function App() {
   const [session, setSession] = useState(null);
   const [agency, setAgency] = useState(null);
-  const [runs, setRuns] = useState([]);
+
   const [listings, setListings] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [view, setView] = useState("search");
+
+  const [view, setView] = useState("search"); // search | history
+  const [runs, setRuns] = useState([]);
   const [selectedRunId, setSelectedRunId] = useState("");
 
+  // ===== AUTH =====
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
@@ -23,8 +26,10 @@ export default function App() {
     return () => data.subscription.unsubscribe();
   }, []);
 
+  // ===== LOAD AGENCY =====
   useEffect(() => {
     if (!session) return;
+
     supabase
       .from("agencies")
       .select("*")
@@ -33,38 +38,86 @@ export default function App() {
       .then(({ data }) => setAgency(data));
   }, [session]);
 
-  const loadRuns = async () => {
+  const signIn = async (email) => {
+    await supabase.auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo: window.location.origin },
+    });
+  };
+
+  const signOut = async () => {
+    await supabase.auth.signOut();
+  };
+
+  // ===== LOAD RUNS =====
+  const loadMyRuns = async () => {
+    if (!agency) return;
+
     const { data } = await supabase
       .from("agency_runs")
-      .select("id, created_at, new_listings_count")
+      .select("id, created_at, run_completed_at, new_listings_count")
       .eq("agency_id", agency.id)
       .order("created_at", { ascending: false });
+
     setRuns(data || []);
   };
 
-  const loadRunListings = async (runId) => {
-    const { data } = await supabase
-      .from("agency_run_listings")
-      .select("listings(id,title,city,province,price,url)")
-      .eq("run_id", runId);
+  // ===== LOAD LISTINGS BY RUN DATE =====
+  const loadListingsForRun = async (runId) => {
+    setLoading(true);
+    setListings([]);
 
-    setListings(data.map((r) => r.listings));
+    const { data: run } = await supabase
+      .from("agency_runs")
+      .select("run_completed_at")
+      .eq("id", runId)
+      .single();
+
+    if (!run?.run_completed_at) {
+      setLoading(false);
+      return;
+    }
+
+    const { data } = await supabase
+      .from("agency_listings")
+      .select(
+        `
+        listings (
+          id,
+          title,
+          city,
+          province,
+          price,
+          url,
+          first_seen_at
+        )
+      `
+      )
+      .eq("agency_id", agency.id)
+      .lte("listings.first_seen_at", run.run_completed_at)
+      .order("listings.first_seen_at", { ascending: false });
+
+    if (data) {
+      setListings(data.map((r) => r.listings));
+    }
+
+    setLoading(false);
+    setView("search");
   };
 
+  // ===== LOGIN =====
   if (!session) {
     return (
       <div className="card">
+        <h2>Login</h2>
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            supabase.auth.signInWithOtp({
-              email: e.target.email.value,
-              options: { emailRedirectTo: window.location.origin },
-            });
+            signIn(e.target.email.value);
           }}
         >
           <input name="email" placeholder="email" />
-          <button>Login</button>
+          <button>Invia magic link</button>
         </form>
       </div>
     );
@@ -72,67 +125,63 @@ export default function App() {
 
   return (
     <div>
+      {/* HEADER */}
       <div className="card">
         <h2>Dashboard</h2>
-        <p className="muted">{session.user.email}</p>
+        <p className="muted">Loggato come {session.user.email}</p>
 
-        <button onClick={() => setView("search")}>Nuova ricerca</button>
-        <button
-          onClick={async () => {
-            await loadRuns();
-            setView("history");
-          }}
-        >
-          Le mie ricerche
-        </button>
-      </div>
-
-      {view === "search" && (
-        <div className="card">
+        <div style={{ display: "flex", gap: 12, marginTop: 12 }}>
+          <button onClick={() => setView("search")}>Dashboard</button>
           <button
-            disabled={loading}
             onClick={async () => {
-              setLoading(true);
-              await fetch(
-                `${import.meta.env.VITE_BACKEND_URL}/run-agency`,
-                {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ agency_id: agency.id }),
-                }
-              );
-
-              setTimeout(async () => {
-                await loadRuns();
-                setLoading(false);
-              }, 8000);
+              await loadMyRuns();
+              setView("history");
             }}
           >
-            Avvia ricerca
+            Le mie ricerche
           </button>
+        </div>
+      </div>
 
-          <ul>
+      {/* SEARCH / RESULTS */}
+      {view === "search" && (
+        <div className="card">
+          <h3>Risultati</h3>
+
+          {loading && <p className="muted">Caricamento…</p>}
+
+          <ul className="results">
             {listings.map((l) => (
               <li key={l.id}>
-                <a href={l.url} target="_blank">{l.title}</a>
+                <a href={l.url} target="_blank" rel="noreferrer">
+                  {l.title}
+                </a>{" "}
+                – {l.city} ({l.province}) – €{l.price}
               </li>
             ))}
           </ul>
+
+          {!loading && listings.length === 0 && (
+            <p className="muted">Nessun annuncio per questo run</p>
+          )}
         </div>
       )}
 
+      {/* HISTORY */}
       {view === "history" && (
         <div className="card">
+          <h3>Le mie ricerche</h3>
+
           <select
             value={selectedRunId}
-            onChange={async (e) => {
-              const id = e.target.value;
-              setSelectedRunId(id);
-              await loadRunListings(id);
-              setView("search");
+            onChange={(e) => {
+              const runId = e.target.value;
+              setSelectedRunId(runId);
+              if (runId) loadListingsForRun(runId);
             }}
           >
-            <option value="">Seleziona una ricerca</option>
+            <option value="">Seleziona una ricerca…</option>
+
             {runs.map((r) => (
               <option key={r.id} value={r.id}>
                 {new Date(r.created_at).toLocaleString()} –{" "}
@@ -143,7 +192,9 @@ export default function App() {
         </div>
       )}
 
-      <button onClick={() => supabase.auth.signOut()}>Logout</button>
+      <div className="actions">
+        <button onClick={signOut}>Logout</button>
+      </div>
     </div>
   );
 }
