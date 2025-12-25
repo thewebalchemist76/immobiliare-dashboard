@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { supabase } from "./supabase";
 import "./App.css";
 
-const PAGE_SIZE = 20;
+const POLL_INTERVAL = 5000;
 
 export default function App() {
   const BACKEND_URL =
@@ -16,19 +16,13 @@ export default function App() {
   const [runs, setRuns] = useState([]);
   const [selectedRun, setSelectedRun] = useState(null);
 
-  const [allListings, setAllListings] = useState([]);
-  const [filteredListings, setFilteredListings] = useState([]);
-
+  const [listings, setListings] = useState([]);
   const [loadingRun, setLoadingRun] = useState(false);
   const [loadingListings, setLoadingListings] = useState(false);
 
-  const [priceMin, setPriceMin] = useState("");
-  const [priceMax, setPriceMax] = useState("");
+  const pollRef = useRef(null);
 
-  const [page, setPage] = useState(1);
-
-  /* ================= AUTH ================= */
-
+  // ===== AUTH =====
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
@@ -41,8 +35,7 @@ export default function App() {
     return () => data.subscription.unsubscribe();
   }, []);
 
-  /* ================= AGENCY ================= */
-
+  // ===== LOAD AGENCY =====
   useEffect(() => {
     if (!session) return;
 
@@ -54,36 +47,69 @@ export default function App() {
       .then(({ data }) => setAgency(data || null));
   }, [session]);
 
-  /* ================= RUNS ================= */
-
+  // ===== LOAD RUNS =====
   const loadRuns = async () => {
-    if (!agency?.id) return;
+    if (!agency?.id) return [];
 
     const { data, error } = await supabase
       .from("agency_runs")
-      .select("id, created_at, apify_run_id, new_listings_count")
+      .select("id, created_at, new_listings_count")
       .eq("agency_id", agency.id)
       .order("created_at", { ascending: false });
 
     if (error) {
-      console.error("loadRuns:", error.message);
+      console.error("loadRuns error:", error.message);
       setRuns([]);
-      return;
+      return [];
     }
 
     setRuns(data || []);
+    return data || [];
   };
 
   useEffect(() => {
     if (agency?.id) loadRuns();
   }, [agency?.id]);
 
-  /* ================= START RUN ================= */
+  // ===== POLLING =====
+  const stopPolling = () => {
+    if (pollRef.current) clearInterval(pollRef.current);
+    pollRef.current = null;
+  };
 
+  const startPolling = () => {
+    stopPolling();
+    pollRef.current = setInterval(async () => {
+      const updated = await loadRuns();
+      const stillRunning = updated.some(
+        (r) => r.new_listings_count === null
+      );
+      if (!stillRunning) {
+        stopPolling();
+        setLoadingRun(false);
+      }
+    }, POLL_INTERVAL);
+  };
+
+  useEffect(() => {
+    const latest = runs[0];
+    if (latest && latest.new_listings_count === null) {
+      setLoadingRun(true);
+      startPolling();
+    } else {
+      stopPolling();
+      setLoadingRun(false);
+    }
+    // eslint-disable-next-line
+  }, [runs[0]?.id, runs[0]?.new_listings_count]);
+
+  // ===== START RUN =====
   const startRun = async () => {
     if (!agency?.id) return;
 
     setLoadingRun(true);
+    setListings([]);
+    setSelectedRun(null);
 
     try {
       await fetch(`${BACKEND_URL}/run-agency`, {
@@ -95,19 +121,16 @@ export default function App() {
       console.error("startRun error:", e);
     }
 
-    setTimeout(() => {
-      loadRuns();
-      setLoadingRun(false);
-    }, 1500);
+    await loadRuns();
+    startPolling();
   };
 
-  /* ================= LISTINGS ================= */
-
+  // ===== LOAD LISTINGS FOR RUN =====
   const loadListingsForRun = async (run) => {
+    if (!run || run.new_listings_count === null) return;
+
     setSelectedRun(run);
-    setAllListings([]);
-    setFilteredListings([]);
-    setPage(1);
+    setListings([]);
     setLoadingListings(true);
 
     const { data, error } = await supabase
@@ -124,49 +147,25 @@ export default function App() {
         )
       `
       )
-      .eq("run_id", run.id);
-
-    setLoadingListings(false);
+      .eq("run_id", run.id)
+      .order("listings.price", { ascending: true });
 
     if (error) {
-      console.error("loadListingsForRun:", error.message);
+      console.error("loadListingsForRun error:", error.message);
+      setLoadingListings(false);
       return;
     }
 
-    const list = (data || []).map((r) => r.listings);
-    setAllListings(list);
-    setFilteredListings(list);
+    setListings((data || []).map((r) => r.listings));
+    setLoadingListings(false);
   };
-
-  /* ================= FILTER ================= */
-
-  const applyFilter = () => {
-    let res = [...allListings];
-
-    if (priceMin) res = res.filter((l) => l.price >= Number(priceMin));
-    if (priceMax) res = res.filter((l) => l.price <= Number(priceMax));
-
-    setFilteredListings(res);
-    setPage(1);
-  };
-
-  /* ================= PAGINATION ================= */
-
-  const totalPages = Math.ceil(filteredListings.length / PAGE_SIZE);
-
-  const paginatedListings = filteredListings.slice(
-    (page - 1) * PAGE_SIZE,
-    page * PAGE_SIZE
-  );
-
-  /* ================= LOGOUT ================= */
 
   const signOut = async () => {
+    stopPolling();
     await supabase.auth.signOut();
   };
 
-  /* ================= LOGIN ================= */
-
+  // ===== LOGIN =====
   if (!session) {
     return (
       <div className="card">
@@ -187,7 +186,7 @@ export default function App() {
     );
   }
 
-  const latestRun = runs[0] || null;
+  const latestRun = runs[0];
 
   return (
     <div>
@@ -214,17 +213,19 @@ export default function App() {
         <div className="card">
           <h3>Avvia ricerca</h3>
 
-          <button onClick={startRun} disabled={loadingRun}>
+          <button onClick={startRun} disabled={loadingRun || !agency?.id}>
             Avvia ricerca
           </button>
 
-          {loadingRun && <p className="muted">Ricerca avviata…</p>}
+          {loadingRun && <p className="muted">Ricerca in corso…</p>}
 
           {latestRun ? (
             <p className="muted">
               Ultima ricerca:{" "}
               {new Date(latestRun.created_at).toLocaleString()} –{" "}
-              {latestRun.new_listings_count} nuovi annunci
+              {latestRun.new_listings_count === null
+                ? "elaborazione annunci in corso…"
+                : `${latestRun.new_listings_count} nuovi annunci`}
             </p>
           ) : (
             <p className="muted">Nessuna ricerca ancora.</p>
@@ -247,71 +248,33 @@ export default function App() {
             <option value="">Seleziona una ricerca…</option>
 
             {runs.map((r) => (
-              <option key={r.id} value={r.id}>
+              <option
+                key={r.id}
+                value={r.id}
+                disabled={r.new_listings_count === null}
+              >
                 {new Date(r.created_at).toLocaleString()} –{" "}
-                {r.new_listings_count} nuovi annunci
+                {r.new_listings_count === null
+                  ? "elaborazione in corso…"
+                  : `${r.new_listings_count} nuovi annunci`}
               </option>
             ))}
           </select>
 
-          {selectedRun && (
-            <>
-              {/* FILTER */}
-              <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
-                <input
-                  placeholder="Prezzo min"
-                  value={priceMin}
-                  onChange={(e) => setPriceMin(e.target.value)}
-                />
-                <input
-                  placeholder="Prezzo max"
-                  value={priceMax}
-                  onChange={(e) => setPriceMax(e.target.value)}
-                />
-                <button onClick={applyFilter}>Applica</button>
-              </div>
-
-              {loadingListings && (
-                <p className="muted">Caricamento annunci…</p>
-              )}
-
-              {!loadingListings && filteredListings.length === 0 && (
-                <p className="muted">Nessun annuncio.</p>
-              )}
-
-              <ul className="results">
-                {paginatedListings.map((l) => (
-                  <li key={l.id}>
-                    <a href={l.url} target="_blank" rel="noreferrer">
-                      {l.title}
-                    </a>{" "}
-                    – {l.city} ({l.province}) – €{l.price}
-                  </li>
-                ))}
-              </ul>
-
-              {/* PAGINATION */}
-              {totalPages > 1 && (
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button
-                    disabled={page === 1}
-                    onClick={() => setPage((p) => p - 1)}
-                  >
-                    ← Prev
-                  </button>
-                  <span>
-                    {page} / {totalPages}
-                  </span>
-                  <button
-                    disabled={page === totalPages}
-                    onClick={() => setPage((p) => p + 1)}
-                  >
-                    Next →
-                  </button>
-                </div>
-              )}
-            </>
+          {loadingListings && (
+            <p className="muted">Caricamento annunci…</p>
           )}
+
+          <ul className="results">
+            {listings.map((l) => (
+              <li key={l.id}>
+                <a href={l.url} target="_blank" rel="noreferrer">
+                  {l.title}
+                </a>{" "}
+                – {l.city} ({l.province}) – €{l.price}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
