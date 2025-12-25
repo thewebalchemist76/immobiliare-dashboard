@@ -1,6 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { supabase } from "./supabase";
 import "./App.css";
+
+const POLL_INTERVAL = 5000;
 
 export default function App() {
   const BACKEND_URL =
@@ -18,7 +20,9 @@ export default function App() {
   const [loadingRun, setLoadingRun] = useState(false);
   const [loadingListings, setLoadingListings] = useState(false);
 
-  // ===== AUTH =====
+  const pollRef = useRef(null);
+
+  // ================= AUTH =================
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
@@ -31,7 +35,7 @@ export default function App() {
     return () => data.subscription.unsubscribe();
   }, []);
 
-  // ===== LOAD AGENCY =====
+  // ================= AGENCY =================
   useEffect(() => {
     if (!session) return;
 
@@ -43,30 +47,62 @@ export default function App() {
       .then(({ data }) => setAgency(data || null));
   }, [session]);
 
-  // ===== LOAD RUNS =====
+  // ================= RUNS =================
   const loadRuns = async () => {
-    if (!agency?.id) return;
+    if (!agency?.id) return [];
 
     const { data, error } = await supabase
       .from("agency_runs")
-      .select("id, created_at, new_listings_count")
+      .select("id, created_at, run_completed_at, new_listings_count")
       .eq("agency_id", agency.id)
       .order("created_at", { ascending: false });
 
     if (error) {
-      console.error(error);
+      console.error("loadRuns:", error.message);
       setRuns([]);
-      return;
+      return [];
     }
 
     setRuns(data || []);
+    return data || [];
   };
 
   useEffect(() => {
-    if (agency?.id) loadRuns();
+    if (!agency?.id) return;
+    loadRuns();
   }, [agency?.id]);
 
-  // ===== START RUN =====
+  // ================= POLLING =================
+  const stopPolling = () => {
+    if (pollRef.current) clearInterval(pollRef.current);
+    pollRef.current = null;
+  };
+
+  const startPolling = () => {
+    stopPolling();
+    pollRef.current = setInterval(async () => {
+      const updated = await loadRuns();
+      const running = updated.some((r) => r.run_completed_at === null);
+      if (!running) {
+        stopPolling();
+        setLoadingRun(false);
+      }
+    }, POLL_INTERVAL);
+  };
+
+  useEffect(() => {
+    const latest = runs[0];
+    if (latest && latest.run_completed_at === null) {
+      setLoadingRun(true);
+      startPolling();
+    } else {
+      setLoadingRun(false);
+      stopPolling();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runs?.[0]?.id, runs?.[0]?.run_completed_at]);
+
+  // ================= START RUN =================
   const startRun = async () => {
     if (!agency?.id) return;
 
@@ -78,16 +114,17 @@ export default function App() {
       body: JSON.stringify({ agency_id: agency.id }),
     });
 
-    setTimeout(async () => {
-      await loadRuns();
-      setLoadingRun(false);
-    }, 2000);
+    await loadRuns();
+    startPolling();
   };
 
-  // ===== LOAD LISTINGS =====
+  // ================= LISTINGS =================
   const loadListingsForRun = async (run) => {
     setSelectedRun(run);
     setListings([]);
+
+    if (!run || run.run_completed_at === null) return;
+
     setLoadingListings(true);
 
     const { data, error } = await supabase
@@ -108,7 +145,7 @@ export default function App() {
       .order("listings.price", { ascending: true });
 
     if (error) {
-      console.error(error);
+      console.error("loadListingsForRun:", error.message);
       setLoadingListings(false);
       return;
     }
@@ -118,10 +155,11 @@ export default function App() {
   };
 
   const signOut = async () => {
+    stopPolling();
     await supabase.auth.signOut();
   };
 
-  // ===== LOGIN =====
+  // ================= LOGIN =================
   if (!session) {
     return (
       <div className="card">
@@ -173,13 +211,15 @@ export default function App() {
             Avvia ricerca
           </button>
 
-          {loadingRun && <p className="muted">Ricerca avviata…</p>}
+          {loadingRun && <p className="muted">Ricerca in corso…</p>}
 
           {latestRun ? (
             <p className="muted">
               Ultima ricerca:{" "}
               {new Date(latestRun.created_at).toLocaleString()} –{" "}
-              {latestRun.new_listings_count} nuovi annunci
+              {latestRun.run_completed_at === null
+                ? "elaborazione in corso…"
+                : `${latestRun.new_listings_count} nuovi annunci`}
             </p>
           ) : (
             <p className="muted">Nessuna ricerca ancora.</p>
@@ -200,14 +240,21 @@ export default function App() {
             }}
           >
             <option value="">Seleziona una ricerca…</option>
-
             {runs.map((r) => (
               <option key={r.id} value={r.id}>
                 {new Date(r.created_at).toLocaleString()} –{" "}
-                {r.new_listings_count} nuovi annunci
+                {r.run_completed_at === null
+                  ? "elaborazione in corso…"
+                  : `${r.new_listings_count} nuovi annunci`}
               </option>
             ))}
           </select>
+
+          {selectedRun && selectedRun.run_completed_at === null && (
+            <p className="muted">
+              Elaborazione annunci in corso… (aggiorno ogni 5s)
+            </p>
+          )}
 
           {loadingListings && <p className="muted">Caricamento annunci…</p>}
 
@@ -221,6 +268,13 @@ export default function App() {
               </li>
             ))}
           </ul>
+
+          {!loadingListings &&
+            selectedRun &&
+            selectedRun.run_completed_at !== null &&
+            listings.length === 0 && (
+              <p className="muted">Nessun annuncio per questo run.</p>
+            )}
         </div>
       )}
 
