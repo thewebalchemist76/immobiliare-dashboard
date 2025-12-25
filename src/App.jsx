@@ -1,8 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "./supabase";
 import "./App.css";
 
-const POLL_INTERVAL = 5000;
 const PAGE_SIZE = 20;
 
 export default function App() {
@@ -13,19 +12,16 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [agency, setAgency] = useState(null);
 
-  const [view, setView] = useState("dashboard"); // dashboard | history
+  const [view, setView] = useState("dashboard");
   const [runs, setRuns] = useState([]);
   const [selectedRun, setSelectedRun] = useState(null);
 
   const [listings, setListings] = useState([]);
-  const [loadingRun, setLoadingRun] = useState(false);
   const [loadingListings, setLoadingListings] = useState(false);
 
   const [priceMin, setPriceMin] = useState("");
   const [priceMax, setPriceMax] = useState("");
   const [page, setPage] = useState(0);
-
-  const pollRef = useRef(null);
 
   /* ================= AUTH ================= */
   useEffect(() => {
@@ -54,109 +50,78 @@ export default function App() {
 
   /* ================= RUNS ================= */
   const loadRuns = async () => {
-    if (!agency?.id) return [];
+    if (!agency?.id) return;
 
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from("agency_runs")
       .select("id, created_at, new_listings_count")
       .eq("agency_id", agency.id)
       .order("created_at", { ascending: false });
 
-    if (error) {
-      console.error("loadRuns", error);
-      setRuns([]);
-      return [];
-    }
-
     setRuns(data || []);
-    return data || [];
   };
 
   useEffect(() => {
     if (agency?.id) loadRuns();
   }, [agency?.id]);
 
-  /* ================= POLLING ================= */
-  const stopPolling = () => {
-    if (pollRef.current) clearInterval(pollRef.current);
-    pollRef.current = null;
-  };
-
-  const startPolling = () => {
-    stopPolling();
-    pollRef.current = setInterval(loadRuns, POLL_INTERVAL);
-  };
-
   /* ================= START RUN ================= */
   const startRun = async () => {
     if (!agency?.id) return;
 
-    setLoadingRun(true);
-
-    try {
-      await fetch(`${BACKEND_URL}/run-agency`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ agency_id: agency.id }),
-      });
-    } catch (e) {
-      console.error("startRun", e);
-    }
+    await fetch(`${BACKEND_URL}/run-agency`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agency_id: agency.id }),
+    });
 
     await loadRuns();
-    startPolling();
-    setLoadingRun(false);
   };
 
-  /* ================= LOAD LISTINGS (FIX DEFINITIVO) ================= */
+  /* ================= LOAD LISTINGS (FIX REALE) ================= */
   const loadListingsForRun = async (run, resetPage = true) => {
     if (!run) return;
 
     setSelectedRun(run);
     setListings([]);
     setLoadingListings(true);
-
     if (resetPage) setPage(0);
 
-    let query = supabase
+    /* 1️⃣ PRENDO GLI ID DEGLI ANNUNCI */
+    const { data: links } = await supabase
       .from("agency_run_listings")
-      .select(
-        `
-        listing:listing_id (
-          id,
-          title,
-          city,
-          province,
-          price,
-          url
-        )
-      `
-      )
+      .select("listing_id")
       .eq("run_id", run.id);
 
-    if (priceMin) query = query.gte("listing.price", Number(priceMin));
-    if (priceMax) query = query.lte("listing.price", Number(priceMax));
+    if (!links || links.length === 0) {
+      setListings([]);
+      setLoadingListings(false);
+      return;
+    }
+
+    const listingIds = links.map((l) => l.listing_id);
+
+    /* 2️⃣ PRENDO GLI ANNUNCI REALI */
+    let query = supabase
+      .from("listings")
+      .select("id, title, city, province, price, url")
+      .in("id", listingIds)
+      .order("price", { ascending: true });
+
+    if (priceMin) query = query.gte("price", Number(priceMin));
+    if (priceMax) query = query.lte("price", Number(priceMax));
 
     const from = (resetPage ? 0 : page) * PAGE_SIZE;
     const to = from + PAGE_SIZE - 1;
 
-    const { data, error } = await query
-      .order("listing.price", { ascending: true })
-      .range(from, to);
+    const { data } = await query.range(from, to);
 
-    if (error) {
-      console.error("loadListingsForRun", error);
-      setListings([]);
-    } else {
-      setListings((data || []).map((r) => r.listing));
-    }
-
+    setListings(data || []);
     setLoadingListings(false);
   };
 
   /* ================= LOGOUT ================= */
   const signOut = async () => {
-    stopPolling();
     await supabase.auth.signOut();
   };
 
@@ -192,14 +157,7 @@ export default function App() {
 
         <div style={{ display: "flex", gap: 12 }}>
           <button onClick={() => setView("dashboard")}>Dashboard</button>
-          <button
-            onClick={async () => {
-              await loadRuns();
-              setView("history");
-            }}
-          >
-            Le mie ricerche
-          </button>
+          <button onClick={() => setView("history")}>Le mie ricerche</button>
         </div>
       </div>
 
@@ -207,10 +165,7 @@ export default function App() {
       {view === "dashboard" && (
         <div className="card">
           <h3>Avvia ricerca</h3>
-
-          <button onClick={startRun} disabled={loadingRun}>
-            Avvia ricerca
-          </button>
+          <button onClick={startRun}>Avvia ricerca</button>
 
           {latestRun ? (
             <p className="muted">
@@ -245,7 +200,7 @@ export default function App() {
             ))}
           </select>
 
-          {/* FILTRO PREZZI */}
+          {/* FILTRO */}
           {selectedRun && (
             <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
               <input
@@ -281,13 +236,12 @@ export default function App() {
             ))}
           </ul>
 
-          {selectedRun && listings.length > 0 && (
+          {listings.length > 0 && (
             <div style={{ display: "flex", gap: 8 }}>
               <button
                 disabled={page === 0}
                 onClick={() => {
-                  const p = page - 1;
-                  setPage(p);
+                  setPage(page - 1);
                   loadListingsForRun(selectedRun, false);
                 }}
               >
@@ -295,8 +249,7 @@ export default function App() {
               </button>
               <button
                 onClick={() => {
-                  const p = page + 1;
-                  setPage(p);
+                  setPage(page + 1);
                   loadListingsForRun(selectedRun, false);
                 }}
               >
