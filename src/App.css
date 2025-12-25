@@ -19,20 +19,21 @@ body {
   color: var(--text);
 }
 
-/* ⬅️ contenitore generale più largo */
+/* ⬅️ CONTAINER MOLTO PIÙ LARGO */
 #root {
-  max-width: 1400px;
+  max-width: 1600px;     /* prima era 1100 */
   margin: 0 auto;
-  padding: 64px 40px;
+  padding: 64px 48px;
 }
 
 /* ===== CARD ===== */
 .card {
+  width: 100%;           /* ⬅️ QUESTO È IL PUNTO CHIAVE */
   background: var(--card-bg);
   border-radius: 24px;
-  padding: 48px 56px;          /* ⬅️ più spazio interno */
+  padding: 56px 64px;
   box-shadow: 0 30px 70px rgba(0, 0, 0, 0.18);
-  margin-bottom: 56px;         /* ⬅️ più respiro tra i box */
+  margin-bottom: 64px;
 }
 
 /* ===== HEADERS ===== */
@@ -54,13 +55,14 @@ h3 {
 /* ===== FORM ===== */
 .search-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 20px;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 24px;
   margin-bottom: 32px;
 }
 
 input,
 select {
+  width: 100%;
   padding: 16px 18px;
   border-radius: 14px;
   border: 1px solid var(--border);
@@ -78,7 +80,7 @@ button {
   background: var(--accent);
   color: white;
   border: none;
-  padding: 16px 26px;
+  padding: 16px 28px;
   border-radius: 16px;
   font-weight: 600;
   cursor: pointer;
@@ -96,14 +98,13 @@ button:disabled {
 
 /* ===== RESULTS ===== */
 .results {
-  margin-top: 16px;
+  margin-top: 24px;
 }
 
 .results li {
   list-style: none;
-  padding: 18px 0;
+  padding: 20px 0;
   border-bottom: 1px solid var(--border);
-  line-height: 1.5;
   font-size: 16px;
 }
 
@@ -117,5 +118,5 @@ button:disabled {
 .actions {
   display: flex;
   justify-content: flex-end;
-  margin-top: 32px;
+  margin-top: 40px;
 }
