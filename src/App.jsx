@@ -27,18 +27,23 @@ export default function App() {
 
   const pollRef = useRef(null);
 
-  // ===== AUTH =====
+  /* ================= AUTH ================= */
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => setSession(data.session));
-    const { data } = supabase.auth.onAuthStateChange((_e, session) => {
-      setSession(session);
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session);
     });
+
+    const { data } = supabase.auth.onAuthStateChange((_e, s) => {
+      setSession(s);
+    });
+
     return () => data.subscription.unsubscribe();
   }, []);
 
-  // ===== LOAD AGENCY =====
+  /* ================= AGENCY ================= */
   useEffect(() => {
     if (!session) return;
+
     supabase
       .from("agencies")
       .select("*")
@@ -47,7 +52,7 @@ export default function App() {
       .then(({ data }) => setAgency(data || null));
   }, [session]);
 
-  // ===== LOAD RUNS =====
+  /* ================= RUNS ================= */
   const loadRuns = async () => {
     if (!agency?.id) return [];
 
@@ -58,7 +63,7 @@ export default function App() {
       .order("created_at", { ascending: false });
 
     if (error) {
-      console.error(error);
+      console.error("loadRuns", error);
       setRuns([]);
       return [];
     }
@@ -71,7 +76,7 @@ export default function App() {
     if (agency?.id) loadRuns();
   }, [agency?.id]);
 
-  // ===== POLLING =====
+  /* ================= POLLING ================= */
   const stopPolling = () => {
     if (pollRef.current) clearInterval(pollRef.current);
     pollRef.current = null;
@@ -82,35 +87,42 @@ export default function App() {
     pollRef.current = setInterval(loadRuns, POLL_INTERVAL);
   };
 
-  // ===== START RUN =====
+  /* ================= START RUN ================= */
   const startRun = async () => {
     if (!agency?.id) return;
 
     setLoadingRun(true);
-    await fetch(`${BACKEND_URL}/run-agency`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ agency_id: agency.id }),
-    });
+
+    try {
+      await fetch(`${BACKEND_URL}/run-agency`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agency_id: agency.id }),
+      });
+    } catch (e) {
+      console.error("startRun", e);
+    }
 
     await loadRuns();
     startPolling();
-    setTimeout(() => setLoadingRun(false), 2000);
+    setLoadingRun(false);
   };
 
-  // ===== LOAD LISTINGS (FIX DEFINITIVO) =====
-  const loadListingsForRun = async (run) => {
+  /* ================= LOAD LISTINGS (FIX DEFINITIVO) ================= */
+  const loadListingsForRun = async (run, resetPage = true) => {
+    if (!run) return;
+
     setSelectedRun(run);
     setListings([]);
-    setPage(0);
-
     setLoadingListings(true);
+
+    if (resetPage) setPage(0);
 
     let query = supabase
       .from("agency_run_listings")
       .select(
         `
-        listings!inner (
+        listing:listing_id (
           id,
           title,
           city,
@@ -122,34 +134,33 @@ export default function App() {
       )
       .eq("run_id", run.id);
 
-    if (priceMin) query = query.gte("listings.price", priceMin);
-    if (priceMax) query = query.lte("listings.price", priceMax);
+    if (priceMin) query = query.gte("listing.price", Number(priceMin));
+    if (priceMax) query = query.lte("listing.price", Number(priceMax));
 
-    const from = page * PAGE_SIZE;
+    const from = (resetPage ? 0 : page) * PAGE_SIZE;
     const to = from + PAGE_SIZE - 1;
 
     const { data, error } = await query
-      .order("listings.price", { ascending: true })
+      .order("listing.price", { ascending: true })
       .range(from, to);
 
     if (error) {
-      console.error(error);
+      console.error("loadListingsForRun", error);
       setListings([]);
     } else {
-      setListings((data || []).map((r) => r.listings));
+      setListings((data || []).map((r) => r.listing));
     }
 
     setLoadingListings(false);
   };
 
-  const latestRun = runs[0];
-
+  /* ================= LOGOUT ================= */
   const signOut = async () => {
     stopPolling();
     await supabase.auth.signOut();
   };
 
-  // ===== LOGIN =====
+  /* ================= LOGIN ================= */
   if (!session) {
     return (
       <div className="card">
@@ -170,6 +181,8 @@ export default function App() {
     );
   }
 
+  const latestRun = runs[0] || null;
+
   return (
     <div>
       {/* HEADER */}
@@ -179,7 +192,14 @@ export default function App() {
 
         <div style={{ display: "flex", gap: 12 }}>
           <button onClick={() => setView("dashboard")}>Dashboard</button>
-          <button onClick={() => setView("history")}>Le mie ricerche</button>
+          <button
+            onClick={async () => {
+              await loadRuns();
+              setView("history");
+            }}
+          >
+            Le mie ricerche
+          </button>
         </div>
       </div>
 
@@ -187,6 +207,7 @@ export default function App() {
       {view === "dashboard" && (
         <div className="card">
           <h3>Avvia ricerca</h3>
+
           <button onClick={startRun} disabled={loadingRun}>
             Avvia ricerca
           </button>
@@ -212,7 +233,7 @@ export default function App() {
             value={selectedRun?.id || ""}
             onChange={(e) => {
               const run = runs.find((r) => r.id === e.target.value);
-              if (run) loadListingsForRun(run);
+              if (run) loadListingsForRun(run, true);
             }}
           >
             <option value="">Seleziona una ricerca…</option>
@@ -224,65 +245,64 @@ export default function App() {
             ))}
           </select>
 
+          {/* FILTRO PREZZI */}
           {selectedRun && (
-            <>
-              <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-                <input
-                  placeholder="Prezzo min"
-                  value={priceMin}
-                  onChange={(e) => setPriceMin(e.target.value)}
-                />
-                <input
-                  placeholder="Prezzo max"
-                  value={priceMax}
-                  onChange={(e) => setPriceMax(e.target.value)}
-                />
-                <button onClick={() => loadListingsForRun(selectedRun)}>
-                  Applica
-                </button>
-              </div>
+            <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
+              <input
+                placeholder="Prezzo min"
+                value={priceMin}
+                onChange={(e) => setPriceMin(e.target.value)}
+              />
+              <input
+                placeholder="Prezzo max"
+                value={priceMax}
+                onChange={(e) => setPriceMax(e.target.value)}
+              />
+              <button onClick={() => loadListingsForRun(selectedRun, true)}>
+                Applica
+              </button>
+            </div>
+          )}
 
-              {loadingListings && (
-                <p className="muted">Caricamento annunci…</p>
-              )}
+          {loadingListings && <p className="muted">Caricamento annunci…</p>}
 
-              {!loadingListings && listings.length === 0 && (
-                <p className="muted">
-                  Nessun annuncio per questa ricerca.
-                </p>
-              )}
+          {!loadingListings && selectedRun && listings.length === 0 && (
+            <p className="muted">Nessun annuncio per questa ricerca.</p>
+          )}
 
-              <ul className="results">
-                {listings.map((l) => (
-                  <li key={l.id}>
-                    <a href={l.url} target="_blank" rel="noreferrer">
-                      {l.title}
-                    </a>{" "}
-                    – {l.city} ({l.province}) – €{l.price}
-                  </li>
-                ))}
-              </ul>
+          <ul className="results">
+            {listings.map((l) => (
+              <li key={l.id}>
+                <a href={l.url} target="_blank" rel="noreferrer">
+                  {l.title}
+                </a>{" "}
+                – {l.city} ({l.province}) – €{l.price}
+              </li>
+            ))}
+          </ul>
 
-              <div style={{ display: "flex", gap: 8 }}>
-                <button
-                  disabled={page === 0}
-                  onClick={() => {
-                    setPage((p) => p - 1);
-                    loadListingsForRun(selectedRun);
-                  }}
-                >
-                  ← Prev
-                </button>
-                <button
-                  onClick={() => {
-                    setPage((p) => p + 1);
-                    loadListingsForRun(selectedRun);
-                  }}
-                >
-                  Next →
-                </button>
-              </div>
-            </>
+          {selectedRun && listings.length > 0 && (
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                disabled={page === 0}
+                onClick={() => {
+                  const p = page - 1;
+                  setPage(p);
+                  loadListingsForRun(selectedRun, false);
+                }}
+              >
+                ← Prev
+              </button>
+              <button
+                onClick={() => {
+                  const p = page + 1;
+                  setPage(p);
+                  loadListingsForRun(selectedRun, false);
+                }}
+              >
+                Next →
+              </button>
+            </div>
           )}
         </div>
       )}
