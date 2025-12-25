@@ -12,11 +12,8 @@ export default function App() {
   const [selectedRun, setSelectedRun] = useState(null);
 
   const [listings, setListings] = useState([]);
-  const [loading, setLoading] = useState(false);
-
   const [page, setPage] = useState(0);
-  const [priceMin, setPriceMin] = useState(50000);
-  const [priceMax, setPriceMax] = useState(500000);
+  const [loading, setLoading] = useState(false);
 
   const [view, setView] = useState("dashboard"); // dashboard | history
 
@@ -45,6 +42,10 @@ export default function App() {
       .then(({ data }) => setAgency(data));
   }, [session]);
 
+  const signOut = async () => {
+    await supabase.auth.signOut();
+  };
+
   // ===== LOAD RUNS =====
   const loadRuns = async () => {
     if (!agency) return;
@@ -58,13 +59,13 @@ export default function App() {
     setRuns(data || []);
   };
 
-  // ===== LOAD LISTINGS (PAGINATED) =====
-  const loadListings = async (run) => {
-    if (!run || !agency) return;
+  // ===== LOAD LISTINGS FOR RUN =====
+  const loadListings = async (run, pageIndex = 0) => {
+    if (!run) return;
 
     setLoading(true);
 
-    const from = page * PAGE_SIZE;
+    const from = pageIndex * PAGE_SIZE;
     const to = from + PAGE_SIZE - 1;
 
     const { data } = await supabase
@@ -82,24 +83,32 @@ export default function App() {
       `
       )
       .eq("run_id", run.id)
-      .gte("listings.price", priceMin)
-      .lte("listings.price", priceMax)
       .range(from, to);
 
     setListings(data ? data.map((r) => r.listings) : []);
     setLoading(false);
   };
 
-  // reload listings on page / price change
-  useEffect(() => {
-    if (selectedRun) loadListings(selectedRun);
-  }, [page, priceMin, priceMax]);
-
-  const signOut = async () => {
-    await supabase.auth.signOut();
-  };
-
-  if (!session) return null;
+  // ===== LOGIN =====
+  if (!session) {
+    return (
+      <div className="card">
+        <h2>Login</h2>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            supabase.auth.signInWithOtp({
+              email: e.target.email.value,
+              options: { emailRedirectTo: window.location.origin },
+            });
+          }}
+        >
+          <input name="email" placeholder="email" />
+          <button>Invia magic link</button>
+        </form>
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -108,7 +117,7 @@ export default function App() {
         <h2>Dashboard</h2>
         <p className="muted">{session.user.email}</p>
 
-        <div style={{ display: "flex", gap: 12 }}>
+        <div style={{ display: "flex", gap: 12, marginTop: 12 }}>
           <button onClick={() => setView("dashboard")}>Dashboard</button>
           <button
             onClick={async () => {
@@ -124,75 +133,47 @@ export default function App() {
       {/* DASHBOARD */}
       {view === "dashboard" && (
         <div className="card">
-          <h3>Avvia ricerca</h3>
+          <h3>Risultati</h3>
 
-          {runs[0] && (
-            <p className="muted">
-              Ultima ricerca:{" "}
-              {new Date(runs[0].created_at).toLocaleString()} –{" "}
-              {runs[0].new_listings_count} nuovi annunci
-            </p>
+          {!selectedRun && (
+            <p className="muted">Seleziona una ricerca dallo storico</p>
           )}
 
-          <button
-            onClick={async () => {
-              setLoading(true);
-              await fetch(
-                `${import.meta.env.VITE_BACKEND_URL}/run-agency`,
-                {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ agency_id: agency.id }),
-                }
-              );
-              await loadRuns();
-              setLoading(false);
-            }}
-          >
-            Avvia ricerca
-          </button>
+          {loading && <p className="muted">Caricamento…</p>}
 
-          <h3 style={{ marginTop: 24 }}>Risultati</h3>
+          <ul className="results">
+            {listings.map((l) => (
+              <li key={l.id}>
+                <a href={l.url} target="_blank" rel="noreferrer">
+                  {l.title}
+                </a>{" "}
+                – {l.city} ({l.province}) – €{l.price}
+              </li>
+            ))}
+          </ul>
 
-          {runs[0] && (
-            <>
-              {/* FILTRO PREZZO */}
-              <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-                <input
-                  type="number"
-                  value={priceMin}
-                  onChange={(e) => setPriceMin(Number(e.target.value))}
-                  placeholder="Prezzo min"
-                />
-                <input
-                  type="number"
-                  value={priceMax}
-                  onChange={(e) => setPriceMax(Number(e.target.value))}
-                  placeholder="Prezzo max"
-                />
-              </div>
-
-              {loading && <p className="muted">Caricamento…</p>}
-
-              <ul className="results">
-                {listings.map((l) => (
-                  <li key={l.id}>
-                    <a href={l.url} target="_blank" rel="noreferrer">
-                      {l.title}
-                    </a>{" "}
-                    – {l.city} – €{l.price}
-                  </li>
-                ))}
-              </ul>
-
-              {/* PAGINAZIONE */}
-              <div style={{ display: "flex", gap: 8 }}>
-                <button disabled={page === 0} onClick={() => setPage(page - 1)}>
-                  ← Prev
-                </button>
-                <button onClick={() => setPage(page + 1)}>Next →</button>
-              </div>
-            </>
+          {selectedRun && listings.length > 0 && (
+            <div style={{ display: "flex", gap: 12, marginTop: 12 }}>
+              <button
+                disabled={page === 0}
+                onClick={() => {
+                  const p = page - 1;
+                  setPage(p);
+                  loadListings(selectedRun, p);
+                }}
+              >
+                ← Prev
+              </button>
+              <button
+                onClick={() => {
+                  const p = page + 1;
+                  setPage(p);
+                  loadListings(selectedRun, p);
+                }}
+              >
+                Next →
+              </button>
+            </div>
           )}
         </div>
       )}
@@ -207,7 +188,8 @@ export default function App() {
               const run = runs.find((r) => r.id === e.target.value);
               setSelectedRun(run);
               setPage(0);
-              loadListings(run);
+              loadListings(run, 0);
+              setView("dashboard"); // ✅ FIX CRITICO
             }}
           >
             <option value="">Seleziona una ricerca…</option>
