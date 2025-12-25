@@ -1,8 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "./supabase";
 import "./App.css";
-
-const POLL_INTERVAL = 5000;
 
 export default function App() {
   const BACKEND_URL =
@@ -19,8 +17,6 @@ export default function App() {
   const [listings, setListings] = useState([]);
   const [loadingRun, setLoadingRun] = useState(false);
   const [loadingListings, setLoadingListings] = useState(false);
-
-  const pollRef = useRef(null);
 
   // ===== AUTH =====
   useEffect(() => {
@@ -49,7 +45,7 @@ export default function App() {
 
   // ===== LOAD RUNS =====
   const loadRuns = async () => {
-    if (!agency?.id) return [];
+    if (!agency?.id) return;
 
     const { data, error } = await supabase
       .from("agency_runs")
@@ -58,77 +54,38 @@ export default function App() {
       .order("created_at", { ascending: false });
 
     if (error) {
-      console.error("loadRuns error:", error.message);
+      console.error(error);
       setRuns([]);
-      return [];
+      return;
     }
 
     setRuns(data || []);
-    return data || [];
   };
 
   useEffect(() => {
     if (agency?.id) loadRuns();
   }, [agency?.id]);
 
-  // ===== POLLING =====
-  const stopPolling = () => {
-    if (pollRef.current) clearInterval(pollRef.current);
-    pollRef.current = null;
-  };
-
-  const startPolling = () => {
-    stopPolling();
-    pollRef.current = setInterval(async () => {
-      const updated = await loadRuns();
-      const stillRunning = updated.some(
-        (r) => r.new_listings_count === null
-      );
-      if (!stillRunning) {
-        stopPolling();
-        setLoadingRun(false);
-      }
-    }, POLL_INTERVAL);
-  };
-
-  useEffect(() => {
-    const latest = runs[0];
-    if (latest && latest.new_listings_count === null) {
-      setLoadingRun(true);
-      startPolling();
-    } else {
-      stopPolling();
-      setLoadingRun(false);
-    }
-    // eslint-disable-next-line
-  }, [runs[0]?.id, runs[0]?.new_listings_count]);
-
   // ===== START RUN =====
   const startRun = async () => {
     if (!agency?.id) return;
 
     setLoadingRun(true);
-    setListings([]);
-    setSelectedRun(null);
 
-    try {
-      await fetch(`${BACKEND_URL}/run-agency`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ agency_id: agency.id }),
-      });
-    } catch (e) {
-      console.error("startRun error:", e);
-    }
+    await fetch(`${BACKEND_URL}/run-agency`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agency_id: agency.id }),
+    });
 
-    await loadRuns();
-    startPolling();
+    setTimeout(async () => {
+      await loadRuns();
+      setLoadingRun(false);
+    }, 2000);
   };
 
-  // ===== LOAD LISTINGS FOR RUN =====
+  // ===== LOAD LISTINGS =====
   const loadListingsForRun = async (run) => {
-    if (!run || run.new_listings_count === null) return;
-
     setSelectedRun(run);
     setListings([]);
     setLoadingListings(true);
@@ -151,7 +108,7 @@ export default function App() {
       .order("listings.price", { ascending: true });
 
     if (error) {
-      console.error("loadListingsForRun error:", error.message);
+      console.error(error);
       setLoadingListings(false);
       return;
     }
@@ -161,7 +118,6 @@ export default function App() {
   };
 
   const signOut = async () => {
-    stopPolling();
     await supabase.auth.signOut();
   };
 
@@ -213,19 +169,17 @@ export default function App() {
         <div className="card">
           <h3>Avvia ricerca</h3>
 
-          <button onClick={startRun} disabled={loadingRun || !agency?.id}>
+          <button onClick={startRun} disabled={loadingRun}>
             Avvia ricerca
           </button>
 
-          {loadingRun && <p className="muted">Ricerca in corso…</p>}
+          {loadingRun && <p className="muted">Ricerca avviata…</p>}
 
           {latestRun ? (
             <p className="muted">
               Ultima ricerca:{" "}
               {new Date(latestRun.created_at).toLocaleString()} –{" "}
-              {latestRun.new_listings_count === null
-                ? "elaborazione annunci in corso…"
-                : `${latestRun.new_listings_count} nuovi annunci`}
+              {latestRun.new_listings_count} nuovi annunci
             </p>
           ) : (
             <p className="muted">Nessuna ricerca ancora.</p>
@@ -248,22 +202,14 @@ export default function App() {
             <option value="">Seleziona una ricerca…</option>
 
             {runs.map((r) => (
-              <option
-                key={r.id}
-                value={r.id}
-                disabled={r.new_listings_count === null}
-              >
+              <option key={r.id} value={r.id}>
                 {new Date(r.created_at).toLocaleString()} –{" "}
-                {r.new_listings_count === null
-                  ? "elaborazione in corso…"
-                  : `${r.new_listings_count} nuovi annunci`}
+                {r.new_listings_count} nuovi annunci
               </option>
             ))}
           </select>
 
-          {loadingListings && (
-            <p className="muted">Caricamento annunci…</p>
-          )}
+          {loadingListings && <p className="muted">Caricamento annunci…</p>}
 
           <ul className="results">
             {listings.map((l) => (
