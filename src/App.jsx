@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { supabase } from "./supabase";
 import "./App.css";
 
+const PAGE_SIZE = 20;
+
 export default function App() {
   const BACKEND_URL =
     import.meta.env.VITE_BACKEND_URL ||
@@ -14,9 +16,16 @@ export default function App() {
   const [runs, setRuns] = useState([]);
   const [selectedRun, setSelectedRun] = useState(null);
 
-  const [listings, setListings] = useState([]);
+  const [allListings, setAllListings] = useState([]);
+  const [filteredListings, setFilteredListings] = useState([]);
+
   const [loadingRun, setLoadingRun] = useState(false);
   const [loadingListings, setLoadingListings] = useState(false);
+
+  const [priceMin, setPriceMin] = useState("");
+  const [priceMax, setPriceMax] = useState("");
+
+  const [page, setPage] = useState(1);
 
   /* ================= AUTH ================= */
 
@@ -96,7 +105,9 @@ export default function App() {
 
   const loadListingsForRun = async (run) => {
     setSelectedRun(run);
-    setListings([]);
+    setAllListings([]);
+    setFilteredListings([]);
+    setPage(1);
     setLoadingListings(true);
 
     const { data, error } = await supabase
@@ -122,13 +133,31 @@ export default function App() {
       return;
     }
 
-    if (!data || data.length === 0) {
-      setListings([]);
-      return;
-    }
-
-    setListings(data.map((r) => r.listings));
+    const list = (data || []).map((r) => r.listings);
+    setAllListings(list);
+    setFilteredListings(list);
   };
+
+  /* ================= FILTER ================= */
+
+  const applyFilter = () => {
+    let res = [...allListings];
+
+    if (priceMin) res = res.filter((l) => l.price >= Number(priceMin));
+    if (priceMax) res = res.filter((l) => l.price <= Number(priceMax));
+
+    setFilteredListings(res);
+    setPage(1);
+  };
+
+  /* ================= PAGINATION ================= */
+
+  const totalPages = Math.ceil(filteredListings.length / PAGE_SIZE);
+
+  const paginatedListings = filteredListings.slice(
+    (page - 1) * PAGE_SIZE,
+    page * PAGE_SIZE
+  );
 
   /* ================= LOGOUT ================= */
 
@@ -225,24 +254,64 @@ export default function App() {
             ))}
           </select>
 
-          {loadingListings && <p className="muted">Caricamento annunci…</p>}
+          {selectedRun && (
+            <>
+              {/* FILTER */}
+              <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+                <input
+                  placeholder="Prezzo min"
+                  value={priceMin}
+                  onChange={(e) => setPriceMin(e.target.value)}
+                />
+                <input
+                  placeholder="Prezzo max"
+                  value={priceMax}
+                  onChange={(e) => setPriceMax(e.target.value)}
+                />
+                <button onClick={applyFilter}>Applica</button>
+              </div>
 
-          {!loadingListings && selectedRun && listings.length === 0 && (
-            <p className="muted">
-              Nessun annuncio disponibile per questa ricerca.
-            </p>
+              {loadingListings && (
+                <p className="muted">Caricamento annunci…</p>
+              )}
+
+              {!loadingListings && filteredListings.length === 0 && (
+                <p className="muted">Nessun annuncio.</p>
+              )}
+
+              <ul className="results">
+                {paginatedListings.map((l) => (
+                  <li key={l.id}>
+                    <a href={l.url} target="_blank" rel="noreferrer">
+                      {l.title}
+                    </a>{" "}
+                    – {l.city} ({l.province}) – €{l.price}
+                  </li>
+                ))}
+              </ul>
+
+              {/* PAGINATION */}
+              {totalPages > 1 && (
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    disabled={page === 1}
+                    onClick={() => setPage((p) => p - 1)}
+                  >
+                    ← Prev
+                  </button>
+                  <span>
+                    {page} / {totalPages}
+                  </span>
+                  <button
+                    disabled={page === totalPages}
+                    onClick={() => setPage((p) => p + 1)}
+                  >
+                    Next →
+                  </button>
+                </div>
+              )}
+            </>
           )}
-
-          <ul className="results">
-            {listings.map((l) => (
-              <li key={l.id}>
-                <a href={l.url} target="_blank" rel="noreferrer">
-                  {l.title}
-                </a>{" "}
-                – {l.city} ({l.province}) – €{l.price}
-              </li>
-            ))}
-          </ul>
         </div>
       )}
 
