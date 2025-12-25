@@ -6,11 +6,11 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [agency, setAgency] = useState(null);
 
+  const [runs, setRuns] = useState([]);
   const [listings, setListings] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  const [view, setView] = useState("search"); // search | history
-  const [runs, setRuns] = useState([]);
+  const [view, setView] = useState("dashboard");
   const [selectedRunId, setSelectedRunId] = useState("");
 
   // ===== AUTH =====
@@ -38,55 +38,30 @@ export default function App() {
       .then(({ data }) => setAgency(data));
   }, [session]);
 
-  // ===== AUTO LOAD RUNS =====
-  useEffect(() => {
-    if (agency && view === "history") {
-      loadMyRuns();
-    }
-  }, [agency, view]);
-
-  const signIn = async (email) => {
-    await supabase.auth.signInWithOtp({
-      email,
-      options: { emailRedirectTo: window.location.origin },
-    });
-  };
-
   const signOut = async () => {
     await supabase.auth.signOut();
   };
 
   // ===== LOAD RUNS =====
-  const loadMyRuns = async () => {
+  const loadRuns = async () => {
     if (!agency) return;
 
     const { data } = await supabase
       .from("agency_runs")
-      .select("id, created_at, run_completed_at, new_listings_count")
+      .select("id, created_at, new_listings_count")
       .eq("agency_id", agency.id)
       .order("created_at", { ascending: false });
 
     setRuns(data || []);
   };
 
-  // ===== LOAD LISTINGS BY RUN =====
+  // ===== LOAD LISTINGS FOR RUN =====
   const loadListingsForRun = async (runId) => {
     setLoading(true);
     setListings([]);
 
-    const { data: run } = await supabase
-      .from("agency_runs")
-      .select("run_completed_at")
-      .eq("id", runId)
-      .single();
-
-    if (!run?.run_completed_at) {
-      setLoading(false);
-      return;
-    }
-
     const { data } = await supabase
-      .from("agency_listings")
+      .from("agency_run_listings")
       .select(
         `
         listings (
@@ -95,56 +70,46 @@ export default function App() {
           city,
           province,
           price,
-          url,
-          first_seen_at
+          url
         )
       `
       )
-      .eq("agency_id", agency.id)
-      .lte("listings.first_seen_at", run.run_completed_at)
-      .order("listings.first_seen_at", { ascending: false });
+      .eq("run_id", runId);
 
     if (data) {
       setListings(data.map((r) => r.listings));
     }
 
     setLoading(false);
-    setView("search");
+    setView("dashboard");
   };
 
-  // ===== LOGIN =====
   if (!session) {
-    return (
-      <div className="card">
-        <h2>Login</h2>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            signIn(e.target.email.value);
-          }}
-        >
-          <input name="email" placeholder="email" />
-          <button>Invia magic link</button>
-        </form>
-      </div>
-    );
+    return <p>Loading…</p>;
   }
 
   return (
     <div>
+      {/* HEADER */}
       <div className="card">
         <h2>Dashboard</h2>
-        <p className="muted">Loggato come {session.user.email}</p>
+        <p className="muted">{session.user.email}</p>
 
-        <div style={{ display: "flex", gap: 12, marginTop: 12 }}>
-          <button onClick={() => setView("search")}>Dashboard</button>
-          <button onClick={() => setView("history")}>
+        <div style={{ display: "flex", gap: 12 }}>
+          <button onClick={() => setView("dashboard")}>Dashboard</button>
+          <button
+            onClick={async () => {
+              await loadRuns();
+              setView("history");
+            }}
+          >
             Le mie ricerche
           </button>
         </div>
       </div>
 
-      {view === "search" && (
+      {/* DASHBOARD */}
+      {view === "dashboard" && (
         <div className="card">
           <h3>Risultati</h3>
 
@@ -162,11 +127,12 @@ export default function App() {
           </ul>
 
           {!loading && listings.length === 0 && (
-            <p className="muted">Nessun annuncio per questo run</p>
+            <p className="muted">Seleziona una ricerca dallo storico</p>
           )}
         </div>
       )}
 
+      {/* HISTORY */}
       {view === "history" && (
         <div className="card">
           <h3>Le mie ricerche</h3>
@@ -180,6 +146,7 @@ export default function App() {
             }}
           >
             <option value="">Seleziona una ricerca…</option>
+
             {runs.map((r) => (
               <option key={r.id} value={r.id}>
                 {new Date(r.created_at).toLocaleString()} –{" "}
