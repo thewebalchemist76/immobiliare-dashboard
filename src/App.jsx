@@ -6,11 +6,11 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [agency, setAgency] = useState(null);
 
-  const [runs, setRuns] = useState([]);
   const [listings, setListings] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  const [view, setView] = useState("dashboard");
+  const [view, setView] = useState("dashboard"); // dashboard | history
+  const [runs, setRuns] = useState([]);
   const [selectedRunId, setSelectedRunId] = useState("");
 
   // ===== AUTH =====
@@ -43,7 +43,7 @@ export default function App() {
   };
 
   // ===== LOAD RUNS =====
-  const loadRuns = async () => {
+  const loadMyRuns = async () => {
     if (!agency) return;
 
     const { data } = await supabase
@@ -84,9 +84,9 @@ export default function App() {
     setView("dashboard");
   };
 
-  if (!session) {
-    return <p>Loading…</p>;
-  }
+  if (!session) return null;
+
+  const lastRun = runs[0];
 
   return (
     <div>
@@ -99,7 +99,7 @@ export default function App() {
           <button onClick={() => setView("dashboard")}>Dashboard</button>
           <button
             onClick={async () => {
-              await loadRuns();
+              await loadMyRuns();
               setView("history");
             }}
           >
@@ -111,7 +111,40 @@ export default function App() {
       {/* DASHBOARD */}
       {view === "dashboard" && (
         <div className="card">
-          <h3>Risultati</h3>
+          <h3>Avvia ricerca</h3>
+
+          {lastRun && (
+            <p className="muted">
+              Ultima ricerca:{" "}
+              {new Date(lastRun.created_at).toLocaleString()} –{" "}
+              <strong>{lastRun.new_listings_count}</strong> nuovi annunci
+            </p>
+          )}
+
+          <button
+            disabled={loading || !agency}
+            onClick={async () => {
+              setLoading(true);
+
+              await fetch(
+                `${import.meta.env.VITE_BACKEND_URL}/run-agency`,
+                {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ agency_id: agency.id }),
+                }
+              );
+
+              setTimeout(async () => {
+                await loadMyRuns();
+                setLoading(false);
+              }, 6000);
+            }}
+          >
+            {loading ? "Ricerca in corso…" : "Avvia ricerca"}
+          </button>
+
+          <h3 style={{ marginTop: 24 }}>Risultati</h3>
 
           {loading && <p className="muted">Caricamento…</p>}
 
@@ -140,13 +173,12 @@ export default function App() {
           <select
             value={selectedRunId}
             onChange={(e) => {
-              const runId = e.target.value;
-              setSelectedRunId(runId);
-              if (runId) loadListingsForRun(runId);
+              const id = e.target.value;
+              setSelectedRunId(id);
+              if (id) loadListingsForRun(id);
             }}
           >
             <option value="">Seleziona una ricerca…</option>
-
             {runs.map((r) => (
               <option key={r.id} value={r.id}>
                 {new Date(r.created_at).toLocaleString()} –{" "}
