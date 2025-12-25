@@ -21,7 +21,9 @@ export default function App() {
 
   const [priceMin, setPriceMin] = useState("");
   const [priceMax, setPriceMax] = useState("");
+
   const [page, setPage] = useState(0);
+  const [totalCount, setTotalCount] = useState(0);
 
   /* ================= AUTH ================= */
   useEffect(() => {
@@ -78,16 +80,17 @@ export default function App() {
     await loadRuns();
   };
 
-  /* ================= LOAD LISTINGS (FIX REALE) ================= */
+  /* ================= LOAD LISTINGS ================= */
   const loadListingsForRun = async (run, resetPage = true) => {
     if (!run) return;
 
     setSelectedRun(run);
     setListings([]);
     setLoadingListings(true);
+
     if (resetPage) setPage(0);
 
-    /* 1️⃣ PRENDO GLI ID DEGLI ANNUNCI */
+    /* 1️⃣ ids */
     const { data: links } = await supabase
       .from("agency_run_listings")
       .select("listing_id")
@@ -95,32 +98,44 @@ export default function App() {
 
     if (!links || links.length === 0) {
       setListings([]);
+      setTotalCount(0);
       setLoadingListings(false);
       return;
     }
 
     const listingIds = links.map((l) => l.listing_id);
 
-    /* 2️⃣ PRENDO GLI ANNUNCI REALI */
-    let query = supabase
+    /* 2️⃣ total count */
+    let countQuery = supabase
+      .from("listings")
+      .select("id", { count: "exact", head: true })
+      .in("id", listingIds);
+
+    if (priceMin) countQuery = countQuery.gte("price", Number(priceMin));
+    if (priceMax) countQuery = countQuery.lte("price", Number(priceMax));
+
+    const { count } = await countQuery;
+    setTotalCount(count || 0);
+
+    /* 3️⃣ page data */
+    let dataQuery = supabase
       .from("listings")
       .select("id, title, city, province, price, url")
       .in("id", listingIds)
       .order("price", { ascending: true });
 
-    if (priceMin) query = query.gte("price", Number(priceMin));
-    if (priceMax) query = query.lte("price", Number(priceMax));
+    if (priceMin) dataQuery = dataQuery.gte("price", Number(priceMin));
+    if (priceMax) dataQuery = dataQuery.lte("price", Number(priceMax));
 
     const from = (resetPage ? 0 : page) * PAGE_SIZE;
     const to = from + PAGE_SIZE - 1;
 
-    const { data } = await query.range(from, to);
+    const { data } = await dataQuery.range(from, to);
 
     setListings(data || []);
     setLoadingListings(false);
   };
 
-  /* ================= LOGOUT ================= */
   const signOut = async () => {
     await supabase.auth.signOut();
   };
@@ -147,6 +162,7 @@ export default function App() {
   }
 
   const latestRun = runs[0] || null;
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
   return (
     <div>
@@ -200,7 +216,6 @@ export default function App() {
             ))}
           </select>
 
-          {/* FILTRO */}
           {selectedRun && (
             <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
               <input
@@ -237,7 +252,7 @@ export default function App() {
           </ul>
 
           {listings.length > 0 && (
-            <div style={{ display: "flex", gap: 8 }}>
+            <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
               <button
                 disabled={page === 0}
                 onClick={() => {
@@ -247,7 +262,13 @@ export default function App() {
               >
                 ← Prev
               </button>
+
+              <span className="muted">
+                Pagina {page + 1} / {totalPages}
+              </span>
+
               <button
+                disabled={page + 1 >= totalPages}
                 onClick={() => {
                   setPage(page + 1);
                   loadListingsForRun(selectedRun, false);
