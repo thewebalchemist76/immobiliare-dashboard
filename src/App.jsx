@@ -9,12 +9,12 @@ export default function App() {
   const [agency, setAgency] = useState(null);
 
   const [view, setView] = useState("dashboard"); // dashboard | history
-  const [loadingRun, setLoadingRun] = useState(false);
-
   const [runs, setRuns] = useState([]);
   const [selectedRunId, setSelectedRunId] = useState(null);
 
   const [listings, setListings] = useState([]);
+  const [loading, setLoading] = useState(false);
+
   const [page, setPage] = useState(0);
 
   const [minPrice, setMinPrice] = useState("");
@@ -46,7 +46,7 @@ export default function App() {
   }, [session]);
 
   // ===== LOAD RUNS =====
-  const loadRuns = async () => {
+  const loadMyRuns = async () => {
     if (!agency) return;
 
     const { data } = await supabase
@@ -60,6 +60,7 @@ export default function App() {
 
   // ===== LOAD LISTINGS FOR RUN =====
   const loadListingsForRun = async (runId, pageIndex = 0) => {
+    setLoading(true);
     setSelectedRunId(runId);
     setPage(pageIndex);
 
@@ -83,19 +84,33 @@ export default function App() {
         pageIndex * PAGE_SIZE + PAGE_SIZE - 1
       );
 
-    if (minPrice) query = query.gte("listings.price", minPrice);
-    if (maxPrice) query = query.lte("listings.price", maxPrice);
+    if (minPrice) {
+      query = query.gte("price", minPrice, { foreignTable: "listings" });
+    }
 
-    const { data } = await query;
+    if (maxPrice) {
+      query = query.lte("price", maxPrice, { foreignTable: "listings" });
+    }
 
-    setListings((data || []).map((r) => r.listings));
+    const { data, error } = await query;
+
+    if (error) {
+      console.error(error);
+      setListings([]);
+    } else {
+      setListings((data || []).map((r) => r.listings));
+    }
+
+    setLoading(false);
+    setView("dashboard");
   };
 
-  // ===== RUN AGENCY =====
-  const runAgency = async () => {
+  // ===== RUN SEARCH =====
+  const startRun = async () => {
     if (!agency) return;
 
-    setLoadingRun(true);
+    setLoading(true);
+    setListings([]);
 
     await fetch(`${import.meta.env.VITE_BACKEND_URL}/run-agency`, {
       method: "POST",
@@ -103,15 +118,8 @@ export default function App() {
       body: JSON.stringify({ agency_id: agency.id }),
     });
 
-    // aspettiamo che Apify + webhook finiscano
-    setTimeout(async () => {
-      await loadRuns();
-      setLoadingRun(false);
-    }, 8000);
-  };
-
-  const signOut = async () => {
-    await supabase.auth.signOut();
+    await loadMyRuns();
+    setLoading(false);
   };
 
   // ===== LOGIN =====
@@ -146,7 +154,7 @@ export default function App() {
           <button onClick={() => setView("dashboard")}>Dashboard</button>
           <button
             onClick={async () => {
-              await loadRuns();
+              await loadMyRuns();
               setView("history");
             }}
           >
@@ -157,27 +165,75 @@ export default function App() {
 
       {/* DASHBOARD */}
       {view === "dashboard" && (
-        <div className="card">
-          <h3>Avvia ricerca</h3>
+        <>
+          <div className="card">
+            <h3>Avvia ricerca</h3>
 
-          <button onClick={runAgency} disabled={loadingRun}>
-            {loadingRun ? "Sto cercando…" : "Avvia ricerca"}
-          </button>
+            <button onClick={startRun} disabled={loading}>
+              {loading ? "Ricerca in corso…" : "Avvia ricerca"}
+            </button>
 
-          {loadingRun && (
-            <p className="muted" style={{ marginTop: 8 }}>
-              Recupero annunci in corso…
-            </p>
-          )}
+            {runs[0] && (
+              <p className="muted">
+                Ultima ricerca:{" "}
+                {new Date(runs[0].created_at).toLocaleString()} –{" "}
+                {runs[0].new_listings_count} nuovi annunci
+              </p>
+            )}
+          </div>
 
-          {runs[0] && (
-            <p className="muted" style={{ marginTop: 12 }}>
-              Ultima ricerca:{" "}
-              {new Date(runs[0].created_at).toLocaleString()} –{" "}
-              {runs[0].new_listings_count} nuovi annunci
-            </p>
-          )}
-        </div>
+          <div className="card">
+            <h3>Risultati</h3>
+
+            <div style={{ display: "flex", gap: 8 }}>
+              <input
+                placeholder="Prezzo min"
+                value={minPrice}
+                onChange={(e) => setMinPrice(e.target.value)}
+              />
+              <input
+                placeholder="Prezzo max"
+                value={maxPrice}
+                onChange={(e) => setMaxPrice(e.target.value)}
+              />
+              <button
+                disabled={!selectedRunId}
+                onClick={() => loadListingsForRun(selectedRunId, 0)}
+              >
+                Applica
+              </button>
+            </div>
+
+            {loading && <p className="muted">Caricamento…</p>}
+
+            <ul className="results">
+              {listings.map((l) => (
+                <li key={l.id}>
+                  <a href={l.url} target="_blank" rel="noreferrer">
+                    {l.title}
+                  </a>{" "}
+                  – {l.city} ({l.province}) – €{l.price}
+                </li>
+              ))}
+            </ul>
+
+            {listings.length > 0 && (
+              <div style={{ display: "flex", gap: 12 }}>
+                <button
+                  disabled={page === 0}
+                  onClick={() => loadListingsForRun(selectedRunId, page - 1)}
+                >
+                  ← Prev
+                </button>
+                <button
+                  onClick={() => loadListingsForRun(selectedRunId, page + 1)}
+                >
+                  Next →
+                </button>
+              </div>
+            )}
+          </div>
+        </>
       )}
 
       {/* HISTORY */}
@@ -187,7 +243,10 @@ export default function App() {
 
           <select
             value={selectedRunId || ""}
-            onChange={(e) => loadListingsForRun(e.target.value, 0)}
+            onChange={(e) => {
+              const runId = e.target.value;
+              if (runId) loadListingsForRun(runId, 0);
+            }}
           >
             <option value="">Seleziona una ricerca…</option>
             {runs.map((r) => (
@@ -197,62 +256,11 @@ export default function App() {
               </option>
             ))}
           </select>
-
-          {selectedRunId && (
-            <>
-              <h3 style={{ marginTop: 24 }}>Risultati</h3>
-
-              <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-                <input
-                  placeholder="Prezzo min"
-                  value={minPrice}
-                  onChange={(e) => setMinPrice(e.target.value)}
-                />
-                <input
-                  placeholder="Prezzo max"
-                  value={maxPrice}
-                  onChange={(e) => setMaxPrice(e.target.value)}
-                />
-                <button onClick={() => loadListingsForRun(selectedRunId, 0)}>
-                  Applica
-                </button>
-              </div>
-
-              <ul className="results">
-                {listings.map((l) => (
-                  <li key={l.id}>
-                    <a href={l.url} target="_blank" rel="noreferrer">
-                      {l.title}
-                    </a>{" "}
-                    – {l.city} ({l.province}) – €{l.price}
-                  </li>
-                ))}
-              </ul>
-
-              <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
-                <button
-                  disabled={page === 0}
-                  onClick={() =>
-                    loadListingsForRun(selectedRunId, page - 1)
-                  }
-                >
-                  ← Prev
-                </button>
-                <button
-                  onClick={() =>
-                    loadListingsForRun(selectedRunId, page + 1)
-                  }
-                >
-                  Next →
-                </button>
-              </div>
-            </>
-          )}
         </div>
       )}
 
       <div className="actions">
-        <button onClick={signOut}>Logout</button>
+        <button onClick={() => supabase.auth.signOut()}>Logout</button>
       </div>
     </div>
   );
