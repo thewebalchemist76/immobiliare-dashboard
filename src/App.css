@@ -21,6 +21,7 @@ body {
 
 /* ⬅️ CONTAINER MOLTO PIÙ LARGO */
 #root {
+  width: 100%;
   max-width: 1600px;     /* prima era 1100 */
   margin: 0 auto;
   padding: 64px 48px;
