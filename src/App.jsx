@@ -1,18 +1,18 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { supabase } from "./supabase";
 import "./App.css";
 
 const PAGE_SIZE = 20;
+const POLL_INTERVAL_MS = 5000;
 
 export default function App() {
   const BACKEND_URL =
-    import.meta.env.VITE_BACKEND_URL ||
-    "https://immobiliare-backend.onrender.com";
+    import.meta.env.VITE_BACKEND_URL || "https://immobiliare-backend.onrender.com";
 
   const [session, setSession] = useState(null);
   const [agency, setAgency] = useState(null);
 
-  const [view, setView] = useState("dashboard");
+  const [view, setView] = useState("dashboard"); // dashboard | history
   const [runs, setRuns] = useState([]);
   const [selectedRun, setSelectedRun] = useState(null);
 
@@ -25,16 +25,20 @@ export default function App() {
   const [page, setPage] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
 
+  // Dashboard run status
+  const [loadingRun, setLoadingRun] = useState(false);
+  const [runMsg, setRunMsg] = useState("");
+
+  // History “run not ready yet”
+  const [runNotReady, setRunNotReady] = useState(false);
+  const [runReadyMsg, setRunReadyMsg] = useState("");
+
+  const pollRef = useRef(null);
+
   /* ================= AUTH ================= */
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-    });
-
-    const { data } = supabase.auth.onAuthStateChange((_e, s) => {
-      setSession(s);
-    });
-
+    supabase.auth.getSession().then(({ data }) => setSession(data.session));
+    const { data } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
     return () => data.subscription.unsubscribe();
   }, []);
 
@@ -52,49 +56,166 @@ export default function App() {
 
   /* ================= RUNS ================= */
   const loadRuns = async () => {
-    if (!agency?.id) return;
+    if (!agency?.id) return [];
 
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("agency_runs")
-      .select("id, created_at, new_listings_count")
+      .select("id, created_at, apify_run_id, new_listings_count, total_listings")
       .eq("agency_id", agency.id)
       .order("created_at", { ascending: false });
 
+    if (error) {
+      console.error("loadRuns:", error.message);
+      setRuns([]);
+      return [];
+    }
+
     setRuns(data || []);
+    return data || [];
   };
 
   useEffect(() => {
     if (agency?.id) loadRuns();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agency?.id]);
 
-  /* ================= START RUN ================= */
+  const stopPolling = () => {
+    if (pollRef.current) clearInterval(pollRef.current);
+    pollRef.current = null;
+  };
+
+  const getRunLinksCount = async (runId) => {
+    const { count, error } = await supabase
+      .from("agency_run_listings")
+      .select("run_id", { count: "exact", head: true })
+      .eq("run_id", runId);
+
+    if (error) {
+      console.error("getRunLinksCount:", error.message);
+      return 0;
+    }
+    return count || 0;
+  };
+
+  const ensureRunReady = async (run, { showHistoryMsg = false } = {}) => {
+    // Se non abbiamo total_listings, non possiamo sapere “ready”: procediamo.
+    if (!run?.total_listings || run.total_listings <= 0) return true;
+
+    const current = await getRunLinksCount(run.id);
+    const ready = current >= run.total_listings;
+
+    if (showHistoryMsg) {
+      if (!ready) {
+        setRunNotReady(true);
+        setRunReadyMsg(
+          `Caricamento in corso… (${current}/${run.total_listings})`
+        );
+      } else {
+        setRunNotReady(false);
+        setRunReadyMsg("");
+      }
+    }
+
+    return ready;
+  };
+
+  const startReadyPolling = (run, { onReady, onTick } = {}) => {
+    stopPolling();
+    pollRef.current = setInterval(async () => {
+      const ok = await ensureRunReady(run, { showHistoryMsg: true });
+      if (onTick) onTick();
+      if (ok) {
+        stopPolling();
+        if (onReady) onReady();
+      }
+    }, POLL_INTERVAL_MS);
+  };
+
+  /* ================= START RUN (dashboard) ================= */
   const startRun = async () => {
     if (!agency?.id) return;
 
-    await fetch(`${BACKEND_URL}/run-agency`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ agency_id: agency.id }),
-    });
+    setLoadingRun(true);
+    setRunMsg("Ricerca in corso…");
 
-    await loadRuns();
+    try {
+      await fetch(`${BACKEND_URL}/run-agency`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agency_id: agency.id }),
+      });
+    } catch (e) {
+      console.error("startRun:", e);
+      setLoadingRun(false);
+      setRunMsg("Errore avvio ricerca.");
+      return;
+    }
+
+    // Aggiorna lista runs (dovrebbe comparire subito il nuovo run)
+    const updated = await loadRuns();
+    const latest = updated?.[0];
+
+    if (!latest) {
+      setRunMsg("Ricerca avviata…");
+      return;
+    }
+
+    // Mostra “elaborazione” finché non sono stati inseriti tutti i link
+    setRunMsg("Elaborazione annunci in corso…");
+
+    startReadyPolling(latest, {
+      onReady: async () => {
+        setLoadingRun(false);
+        setRunMsg("");
+        await loadRuns(); // refresh finale
+      },
+    });
   };
 
-  /* ================= LOAD LISTINGS ================= */
+  /* ================= LOAD LISTINGS (history) ================= */
   const loadListingsForRun = async (run, resetPage = true) => {
     if (!run) return;
 
     setSelectedRun(run);
     setListings([]);
-    setLoadingListings(true);
+    setTotalCount(0);
+    setLoadingListings(false);
 
     if (resetPage) setPage(0);
 
-    /* 1️⃣ ids */
-    const { data: links } = await supabase
+    // Se run non pronto: mostra messaggio e polla finché pronto
+    const ready = await ensureRunReady(run, { showHistoryMsg: true });
+    if (!ready) {
+      setListings([]);
+      setTotalCount(0);
+      setLoadingListings(false);
+
+      startReadyPolling(run, {
+        onReady: async () => {
+          // quando pronto carica davvero la pagina 0
+          await loadListingsForRun(run, true);
+        },
+      });
+      return;
+    }
+
+    // pronto: stop polling history msg
+    setRunNotReady(false);
+    setRunReadyMsg("");
+
+    setLoadingListings(true);
+
+    // 1) ids del run
+    const { data: links, error: linksErr } = await supabase
       .from("agency_run_listings")
       .select("listing_id")
       .eq("run_id", run.id);
+
+    if (linksErr) {
+      console.error("linksErr:", linksErr.message);
+      setLoadingListings(false);
+      return;
+    }
 
     if (!links || links.length === 0) {
       setListings([]);
@@ -105,7 +226,7 @@ export default function App() {
 
     const listingIds = links.map((l) => l.listing_id);
 
-    /* 2️⃣ total count */
+    // 2) total count (con filtri prezzo)
     let countQuery = supabase
       .from("listings")
       .select("id", { count: "exact", head: true })
@@ -117,7 +238,7 @@ export default function App() {
     const { count } = await countQuery;
     setTotalCount(count || 0);
 
-    /* 3️⃣ page data */
+    // 3) page data
     let dataQuery = supabase
       .from("listings")
       .select("id, title, city, province, price, url")
@@ -127,16 +248,32 @@ export default function App() {
     if (priceMin) dataQuery = dataQuery.gte("price", Number(priceMin));
     if (priceMax) dataQuery = dataQuery.lte("price", Number(priceMax));
 
-    const from = (resetPage ? 0 : page) * PAGE_SIZE;
+    const effectivePage = resetPage ? 0 : page;
+    const from = effectivePage * PAGE_SIZE;
     const to = from + PAGE_SIZE - 1;
 
-    const { data } = await dataQuery.range(from, to);
+    const { data, error } = await dataQuery.range(from, to);
+
+    if (error) {
+      console.error("dataQuery:", error.message);
+      setLoadingListings(false);
+      return;
+    }
 
     setListings(data || []);
     setLoadingListings(false);
   };
 
+  /* ================= VIEW SWITCH ================= */
+  useEffect(() => {
+    if (!agency?.id) return;
+    // quando cambi tab, refresha sempre i run
+    loadRuns();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, agency?.id]);
+
   const signOut = async () => {
+    stopPolling();
     await supabase.auth.signOut();
   };
 
@@ -181,12 +318,16 @@ export default function App() {
       {view === "dashboard" && (
         <div className="card">
           <h3>Avvia ricerca</h3>
-          <button onClick={startRun}>Avvia ricerca</button>
+
+          <button onClick={startRun} disabled={loadingRun || !agency?.id}>
+            Avvia ricerca
+          </button>
+
+          {(loadingRun || runMsg) && <p className="muted">{runMsg}</p>}
 
           {latestRun ? (
             <p className="muted">
-              Ultima ricerca:{" "}
-              {new Date(latestRun.created_at).toLocaleString()} –{" "}
+              Ultima ricerca: {new Date(latestRun.created_at).toLocaleString()} –{" "}
               {latestRun.new_listings_count} nuovi annunci
             </p>
           ) : (
@@ -210,8 +351,7 @@ export default function App() {
             <option value="">Seleziona una ricerca…</option>
             {runs.map((r) => (
               <option key={r.id} value={r.id}>
-                {new Date(r.created_at).toLocaleString()} –{" "}
-                {r.new_listings_count} nuovi annunci
+                {new Date(r.created_at).toLocaleString()} – {r.new_listings_count} nuovi annunci
               </option>
             ))}
           </select>
@@ -234,9 +374,10 @@ export default function App() {
             </div>
           )}
 
+          {runNotReady && <p className="muted">{runReadyMsg}</p>}
           {loadingListings && <p className="muted">Caricamento annunci…</p>}
 
-          {!loadingListings && selectedRun && listings.length === 0 && (
+          {!runNotReady && !loadingListings && selectedRun && listings.length === 0 && (
             <p className="muted">Nessun annuncio per questa ricerca.</p>
           )}
 
@@ -251,7 +392,7 @@ export default function App() {
             ))}
           </ul>
 
-          {listings.length > 0 && (
+          {!runNotReady && listings.length > 0 && (
             <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
               <button
                 disabled={page === 0}
