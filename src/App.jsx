@@ -9,19 +9,20 @@ export default function App() {
   const [agency, setAgency] = useState(null);
 
   const [view, setView] = useState("dashboard"); // dashboard | history
-  const [runs, setRuns] = useState([]);
-  const [currentRun, setCurrentRun] = useState(null);
 
-  const [allListings, setAllListings] = useState([]);
-  const [filteredListings, setFilteredListings] = useState([]);
+  const [runs, setRuns] = useState([]);
+  const [selectedRunId, setSelectedRunId] = useState("");
+
+  const [listings, setListings] = useState([]);
   const [page, setPage] = useState(0);
 
   const [priceMin, setPriceMin] = useState("");
   const [priceMax, setPriceMax] = useState("");
 
-  const [loading, setLoading] = useState(false);
+  const [loadingRun, setLoadingRun] = useState(false);
+  const [loadingListings, setLoadingListings] = useState(false);
 
-  // ================= AUTH =================
+  // ===== AUTH =====
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
@@ -34,7 +35,7 @@ export default function App() {
     return () => data.subscription.unsubscribe();
   }, []);
 
-  // ================= AGENCY =================
+  // ===== LOAD AGENCY =====
   useEffect(() => {
     if (!session) return;
 
@@ -46,8 +47,8 @@ export default function App() {
       .then(({ data }) => setAgency(data));
   }, [session]);
 
-  // ================= RUNS =================
-  const loadRuns = async () => {
+  // ===== LOAD RUNS =====
+  const loadMyRuns = async () => {
     if (!agency) return;
 
     const { data } = await supabase
@@ -57,19 +58,15 @@ export default function App() {
       .order("created_at", { ascending: false });
 
     setRuns(data || []);
-
-    if (data?.length) {
-      loadRunListings(data[0]);
-    }
   };
 
-  // ================= LISTINGS PER RUN =================
-  const loadRunListings = async (run) => {
-    setLoading(true);
-    setCurrentRun(run);
-    setPage(0);
+  // ===== LOAD LISTINGS FOR RUN =====
+  const loadListingsForRun = async (runId, pageIndex = 0) => {
+    if (!agency) return;
 
-    const { data } = await supabase
+    setLoadingListings(true);
+
+    let query = supabase
       .from("agency_run_listings")
       .select(
         `
@@ -83,53 +80,45 @@ export default function App() {
         )
       `
       )
-      .eq("run_id", run.id);
+      .eq("run_id", runId)
+      .range(
+        pageIndex * PAGE_SIZE,
+        pageIndex * PAGE_SIZE + PAGE_SIZE - 1
+      );
 
-    const listings = (data || []).map((r) => r.listings);
-    setAllListings(listings);
-    setFilteredListings(listings);
-    setLoading(false);
+    if (priceMin) query = query.gte("listings.price", Number(priceMin));
+    if (priceMax) query = query.lte("listings.price", Number(priceMax));
+
+    const { data } = await query;
+
+    setListings(data ? data.map((r) => r.listings) : []);
+    setLoadingListings(false);
   };
 
-  // ================= FILTER =================
-  const applyFilter = () => {
-    let res = [...allListings];
-
-    if (priceMin) {
-      res = res.filter(
-        (l) => Number(l.price) >= Number(priceMin)
-      );
-    }
-    if (priceMax) {
-      res = res.filter(
-        (l) => Number(l.price) <= Number(priceMax)
-      );
-    }
-
-    setFilteredListings(res);
-    setPage(0);
-  };
-
-  // ================= RUN AGENCY =================
-  const runAgency = async () => {
+  // ===== START RUN =====
+  const startRun = async () => {
     if (!agency) return;
 
-    setLoading(true);
+    setLoadingRun(true);
 
-    await fetch(
-      `${import.meta.env.VITE_BACKEND_URL}/run-agency`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ agency_id: agency.id }),
-      }
-    );
+    await fetch(`${import.meta.env.VITE_BACKEND_URL}/run-agency`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agency_id: agency.id }),
+    });
 
-    // aspettiamo webhook
-    setTimeout(loadRuns, 6000);
+    // refresh stato dopo qualche secondo
+    setTimeout(async () => {
+      await loadMyRuns();
+      setLoadingRun(false);
+    }, 4000);
   };
 
-  // ================= LOGIN =================
+  const signOut = async () => {
+    await supabase.auth.signOut();
+  };
+
+  // ===== LOGIN =====
   if (!session) {
     return (
       <div className="card">
@@ -150,10 +139,7 @@ export default function App() {
     );
   }
 
-  const paginated = filteredListings.slice(
-    page * PAGE_SIZE,
-    (page + 1) * PAGE_SIZE
-  );
+  const lastRun = runs[0];
 
   return (
     <div>
@@ -166,7 +152,7 @@ export default function App() {
           <button onClick={() => setView("dashboard")}>Dashboard</button>
           <button
             onClick={async () => {
-              await loadRuns();
+              await loadMyRuns();
               setView("history");
             }}
           >
@@ -177,65 +163,21 @@ export default function App() {
 
       {/* DASHBOARD */}
       {view === "dashboard" && (
-        <>
-          <div className="card">
-            <h3>Avvia ricerca</h3>
-            <button onClick={runAgency} disabled={loading}>
-              {loading ? "Ricerca in corso…" : "Avvia ricerca"}
-            </button>
+        <div className="card">
+          <h3>Avvia ricerca</h3>
 
-            {currentRun && (
-              <p className="muted">
-                Ultima ricerca:{" "}
-                {new Date(currentRun.created_at).toLocaleString()} –{" "}
-                {currentRun.new_listings_count} nuovi annunci
-              </p>
-            )}
-          </div>
+          <button onClick={startRun} disabled={loadingRun}>
+            {loadingRun ? "Ricerca in corso…" : "Avvia ricerca"}
+          </button>
 
-          <div className="card">
-            <h3>Risultati</h3>
-
-            <div style={{ display: "flex", gap: 8 }}>
-              <input
-                placeholder="Prezzo min"
-                value={priceMin}
-                onChange={(e) => setPriceMin(e.target.value)}
-              />
-              <input
-                placeholder="Prezzo max"
-                value={priceMax}
-                onChange={(e) => setPriceMax(e.target.value)}
-              />
-              <button onClick={applyFilter}>Applica</button>
-            </div>
-
-            {loading && <p className="muted">Caricamento…</p>}
-
-            <ul className="results">
-              {paginated.map((l) => (
-                <li key={l.id}>
-                  <a href={l.url} target="_blank" rel="noreferrer">
-                    {l.title}
-                  </a>{" "}
-                  – {l.city} – €{l.price}
-                </li>
-              ))}
-            </ul>
-
-            <div style={{ display: "flex", gap: 12 }}>
-              <button disabled={page === 0} onClick={() => setPage(page - 1)}>
-                ← Prev
-              </button>
-              <button
-                disabled={(page + 1) * PAGE_SIZE >= filteredListings.length}
-                onClick={() => setPage(page + 1)}
-              >
-                Next →
-              </button>
-            </div>
-          </div>
-        </>
+          {lastRun && (
+            <p className="muted" style={{ marginTop: 12 }}>
+              Ultima ricerca:{" "}
+              {new Date(lastRun.created_at).toLocaleString()} –{" "}
+              {lastRun.new_listings_count} nuovi annunci
+            </p>
+          )}
+        </div>
       )}
 
       {/* HISTORY */}
@@ -244,10 +186,12 @@ export default function App() {
           <h3>Le mie ricerche</h3>
 
           <select
+            value={selectedRunId}
             onChange={(e) => {
-              const run = runs.find((r) => r.id === e.target.value);
-              if (run) loadRunListings(run);
-              setView("dashboard");
+              const runId = e.target.value;
+              setSelectedRunId(runId);
+              setPage(0);
+              loadListingsForRun(runId, 0);
             }}
           >
             <option value="">Seleziona una ricerca…</option>
@@ -258,11 +202,73 @@ export default function App() {
               </option>
             ))}
           </select>
+
+          {selectedRunId && (
+            <>
+              <h3 style={{ marginTop: 24 }}>Risultati</h3>
+
+              <div style={{ display: "flex", gap: 8 }}>
+                <input
+                  placeholder="Prezzo min"
+                  value={priceMin}
+                  onChange={(e) => setPriceMin(e.target.value)}
+                />
+                <input
+                  placeholder="Prezzo max"
+                  value={priceMax}
+                  onChange={(e) => setPriceMax(e.target.value)}
+                />
+                <button
+                  onClick={() => {
+                    setPage(0);
+                    loadListingsForRun(selectedRunId, 0);
+                  }}
+                >
+                  Applica
+                </button>
+              </div>
+
+              {loadingListings && <p className="muted">Caricamento…</p>}
+
+              <ul className="results">
+                {listings.map((l) => (
+                  <li key={l.id}>
+                    <a href={l.url} target="_blank" rel="noreferrer">
+                      {l.title}
+                    </a>{" "}
+                    – {l.city} ({l.province}) – €{l.price}
+                  </li>
+                ))}
+              </ul>
+
+              <div style={{ display: "flex", gap: 12 }}>
+                <button
+                  disabled={page === 0}
+                  onClick={() => {
+                    const p = page - 1;
+                    setPage(p);
+                    loadListingsForRun(selectedRunId, p);
+                  }}
+                >
+                  ← Prev
+                </button>
+                <button
+                  onClick={() => {
+                    const p = page + 1;
+                    setPage(p);
+                    loadListingsForRun(selectedRunId, p);
+                  }}
+                >
+                  Next →
+                </button>
+              </div>
+            </>
+          )}
         </div>
       )}
 
       <div className="actions">
-        <button onClick={() => supabase.auth.signOut()}>Logout</button>
+        <button onClick={signOut}>Logout</button>
       </div>
     </div>
   );
