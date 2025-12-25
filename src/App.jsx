@@ -1,28 +1,20 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "./supabase";
 import "./App.css";
 
-const POLL_INTERVAL = 5000;
-
 export default function App() {
-  const BACKEND_URL =
-    import.meta.env.VITE_BACKEND_URL ||
-    "https://immobiliare-backend.onrender.com";
-
   const [session, setSession] = useState(null);
   const [agency, setAgency] = useState(null);
 
   const [view, setView] = useState("dashboard"); // dashboard | history
   const [runs, setRuns] = useState([]);
-  const [selectedRun, setSelectedRun] = useState(null);
+  const [selectedRunId, setSelectedRunId] = useState("");
 
   const [listings, setListings] = useState([]);
-  const [loadingRun, setLoadingRun] = useState(false);
+  const [loadingRuns, setLoadingRuns] = useState(false);
   const [loadingListings, setLoadingListings] = useState(false);
 
-  const pollRef = useRef(null);
-
-  // ================= AUTH =================
+  /* ================= AUTH ================= */
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
@@ -35,7 +27,7 @@ export default function App() {
     return () => data.subscription.unsubscribe();
   }, []);
 
-  // ================= AGENCY =================
+  /* ================= AGENCY ================= */
   useEffect(() => {
     if (!session) return;
 
@@ -47,84 +39,38 @@ export default function App() {
       .then(({ data }) => setAgency(data || null));
   }, [session]);
 
-  // ================= RUNS =================
+  /* ================= RUNS ================= */
   const loadRuns = async () => {
-    if (!agency?.id) return [];
+    if (!agency?.id) return;
+
+    setLoadingRuns(true);
 
     const { data, error } = await supabase
       .from("agency_runs")
-      .select("id, created_at, run_completed_at, new_listings_count")
+      .select("id, created_at, new_listings_count")
       .eq("agency_id", agency.id)
       .order("created_at", { ascending: false });
 
     if (error) {
-      console.error("loadRuns:", error.message);
+      console.error(error);
       setRuns([]);
-      return [];
+    } else {
+      setRuns(data || []);
     }
 
-    setRuns(data || []);
-    return data || [];
+    setLoadingRuns(false);
   };
 
   useEffect(() => {
-    if (!agency?.id) return;
-    loadRuns();
+    if (agency?.id) loadRuns();
   }, [agency?.id]);
 
-  // ================= POLLING =================
-  const stopPolling = () => {
-    if (pollRef.current) clearInterval(pollRef.current);
-    pollRef.current = null;
-  };
+  /* ================= LISTINGS ================= */
+  const loadListingsForRun = async (runId) => {
+    if (!runId) return;
 
-  const startPolling = () => {
-    stopPolling();
-    pollRef.current = setInterval(async () => {
-      const updated = await loadRuns();
-      const running = updated.some((r) => r.run_completed_at === null);
-      if (!running) {
-        stopPolling();
-        setLoadingRun(false);
-      }
-    }, POLL_INTERVAL);
-  };
-
-  useEffect(() => {
-    const latest = runs[0];
-    if (latest && latest.run_completed_at === null) {
-      setLoadingRun(true);
-      startPolling();
-    } else {
-      setLoadingRun(false);
-      stopPolling();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runs?.[0]?.id, runs?.[0]?.run_completed_at]);
-
-  // ================= START RUN =================
-  const startRun = async () => {
-    if (!agency?.id) return;
-
-    setLoadingRun(true);
-
-    await fetch(`${BACKEND_URL}/run-agency`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ agency_id: agency.id }),
-    });
-
-    await loadRuns();
-    startPolling();
-  };
-
-  // ================= LISTINGS =================
-  const loadListingsForRun = async (run) => {
-    setSelectedRun(run);
+    setSelectedRunId(runId);
     setListings([]);
-
-    if (!run || run.run_completed_at === null) return;
-
     setLoadingListings(true);
 
     const { data, error } = await supabase
@@ -141,25 +87,24 @@ export default function App() {
         )
       `
       )
-      .eq("run_id", run.id)
+      .eq("run_id", runId)
       .order("listings.price", { ascending: true });
 
     if (error) {
-      console.error("loadListingsForRun:", error.message);
-      setLoadingListings(false);
-      return;
+      console.error(error);
+      setListings([]);
+    } else {
+      setListings((data || []).map((r) => r.listings));
     }
 
-    setListings((data || []).map((r) => r.listings));
     setLoadingListings(false);
   };
 
   const signOut = async () => {
-    stopPolling();
     await supabase.auth.signOut();
   };
 
-  // ================= LOGIN =================
+  /* ================= LOGIN ================= */
   if (!session) {
     return (
       <div className="card">
@@ -180,7 +125,7 @@ export default function App() {
     );
   }
 
-  const latestRun = runs[0];
+  const latestRun = runs[0] || null;
 
   return (
     <div>
@@ -190,9 +135,20 @@ export default function App() {
         <p className="muted">{session.user.email}</p>
 
         <div style={{ display: "flex", gap: 12 }}>
-          <button onClick={() => setView("dashboard")}>Dashboard</button>
+          <button
+            onClick={() => {
+              setView("dashboard");
+              setSelectedRunId("");
+              setListings([]);
+            }}
+          >
+            Dashboard
+          </button>
+
           <button
             onClick={async () => {
+              setSelectedRunId("");
+              setListings([]);
               await loadRuns();
               setView("history");
             }}
@@ -207,19 +163,11 @@ export default function App() {
         <div className="card">
           <h3>Avvia ricerca</h3>
 
-          <button onClick={startRun} disabled={loadingRun}>
-            Avvia ricerca
-          </button>
-
-          {loadingRun && <p className="muted">Ricerca in corso…</p>}
-
           {latestRun ? (
             <p className="muted">
               Ultima ricerca:{" "}
               {new Date(latestRun.created_at).toLocaleString()} –{" "}
-              {latestRun.run_completed_at === null
-                ? "elaborazione in corso…"
-                : `${latestRun.new_listings_count} nuovi annunci`}
+              {latestRun.new_listings_count} nuovi annunci
             </p>
           ) : (
             <p className="muted">Nessuna ricerca ancora.</p>
@@ -232,29 +180,21 @@ export default function App() {
         <div className="card">
           <h3>Le mie ricerche</h3>
 
+          {loadingRuns && <p className="muted">Caricamento ricerche…</p>}
+
           <select
-            value={selectedRun?.id || ""}
-            onChange={(e) => {
-              const run = runs.find((r) => r.id === e.target.value);
-              if (run) loadListingsForRun(run);
-            }}
+            value={selectedRunId}
+            onChange={(e) => loadListingsForRun(e.target.value)}
           >
             <option value="">Seleziona una ricerca…</option>
+
             {runs.map((r) => (
               <option key={r.id} value={r.id}>
                 {new Date(r.created_at).toLocaleString()} –{" "}
-                {r.run_completed_at === null
-                  ? "elaborazione in corso…"
-                  : `${r.new_listings_count} nuovi annunci`}
+                {r.new_listings_count} nuovi annunci
               </option>
             ))}
           </select>
-
-          {selectedRun && selectedRun.run_completed_at === null && (
-            <p className="muted">
-              Elaborazione annunci in corso… (aggiorno ogni 5s)
-            </p>
-          )}
 
           {loadingListings && <p className="muted">Caricamento annunci…</p>}
 
@@ -269,12 +209,9 @@ export default function App() {
             ))}
           </ul>
 
-          {!loadingListings &&
-            selectedRun &&
-            selectedRun.run_completed_at !== null &&
-            listings.length === 0 && (
-              <p className="muted">Nessun annuncio per questo run.</p>
-            )}
+          {!loadingListings && selectedRunId && listings.length === 0 && (
+            <p className="muted">Nessun annuncio per questa ricerca.</p>
+          )}
         </div>
       )}
 
