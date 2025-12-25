@@ -8,14 +8,14 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [agency, setAgency] = useState(null);
 
-  const [view, setView] = useState("home"); // home | history | results
+  const [view, setView] = useState("dashboard"); // dashboard | history
+  const [loadingRun, setLoadingRun] = useState(false);
 
   const [runs, setRuns] = useState([]);
-  const [selectedRun, setSelectedRun] = useState(null);
+  const [selectedRunId, setSelectedRunId] = useState(null);
 
   const [listings, setListings] = useState([]);
   const [page, setPage] = useState(0);
-  const [loading, setLoading] = useState(false);
 
   const [minPrice, setMinPrice] = useState("");
   const [maxPrice, setMaxPrice] = useState("");
@@ -45,10 +45,6 @@ export default function App() {
       .then(({ data }) => setAgency(data));
   }, [session]);
 
-  const signOut = async () => {
-    await supabase.auth.signOut();
-  };
-
   // ===== LOAD RUNS =====
   const loadRuns = async () => {
     if (!agency) return;
@@ -62,15 +58,12 @@ export default function App() {
     setRuns(data || []);
   };
 
-  // ===== LOAD LISTINGS (PAGINATED) =====
-  const loadListings = async (run, pageIndex = 0) => {
-    if (!run) return;
+  // ===== LOAD LISTINGS FOR RUN =====
+  const loadListingsForRun = async (runId, pageIndex = 0) => {
+    setSelectedRunId(runId);
+    setPage(pageIndex);
 
-    setLoading(true);
-    const from = pageIndex * PAGE_SIZE;
-    const to = from + PAGE_SIZE - 1;
-
-    const { data } = await supabase
+    let query = supabase
       .from("agency_run_listings")
       .select(
         `
@@ -84,20 +77,41 @@ export default function App() {
         )
       `
       )
-      .eq("run_id", run.id)
-      .range(from, to);
+      .eq("run_id", runId)
+      .range(
+        pageIndex * PAGE_SIZE,
+        pageIndex * PAGE_SIZE + PAGE_SIZE - 1
+      );
 
-    let rows = data ? data.map((r) => r.listings) : [];
+    if (minPrice) query = query.gte("listings.price", minPrice);
+    if (maxPrice) query = query.lte("listings.price", maxPrice);
 
-    // 💰 FILTER PRICE (client-side)
-    rows = rows.filter((l) => {
-      if (minPrice && l.price < Number(minPrice)) return false;
-      if (maxPrice && l.price > Number(maxPrice)) return false;
-      return true;
+    const { data } = await query;
+
+    setListings((data || []).map((r) => r.listings));
+  };
+
+  // ===== RUN AGENCY =====
+  const runAgency = async () => {
+    if (!agency) return;
+
+    setLoadingRun(true);
+
+    await fetch(`${import.meta.env.VITE_BACKEND_URL}/run-agency`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agency_id: agency.id }),
     });
 
-    setListings(rows);
-    setLoading(false);
+    // aspettiamo che Apify + webhook finiscano
+    setTimeout(async () => {
+      await loadRuns();
+      setLoadingRun(false);
+    }, 8000);
+  };
+
+  const signOut = async () => {
+    await supabase.auth.signOut();
   };
 
   // ===== LOGIN =====
@@ -129,7 +143,7 @@ export default function App() {
         <p className="muted">{session.user.email}</p>
 
         <div style={{ display: "flex", gap: 12 }}>
-          <button onClick={() => setView("home")}>Dashboard</button>
+          <button onClick={() => setView("dashboard")}>Dashboard</button>
           <button
             onClick={async () => {
               await loadRuns();
@@ -141,27 +155,20 @@ export default function App() {
         </div>
       </div>
 
-      {/* HOME */}
-      {view === "home" && (
+      {/* DASHBOARD */}
+      {view === "dashboard" && (
         <div className="card">
           <h3>Avvia ricerca</h3>
 
-          <button
-            onClick={async () => {
-              await fetch(
-                `${import.meta.env.VITE_BACKEND_URL}/run-agency`,
-                {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ agency_id: agency.id }),
-                }
-              );
-
-              await loadRuns();
-            }}
-          >
-            Avvia ricerca
+          <button onClick={runAgency} disabled={loadingRun}>
+            {loadingRun ? "Sto cercando…" : "Avvia ricerca"}
           </button>
+
+          {loadingRun && (
+            <p className="muted" style={{ marginTop: 8 }}>
+              Recupero annunci in corso…
+            </p>
+          )}
 
           {runs[0] && (
             <p className="muted" style={{ marginTop: 12 }}>
@@ -179,13 +186,8 @@ export default function App() {
           <h3>Le mie ricerche</h3>
 
           <select
-            onChange={(e) => {
-              const run = runs.find((r) => r.id === e.target.value);
-              setSelectedRun(run);
-              setPage(0);
-              setView("results");
-              loadListings(run, 0);
-            }}
+            value={selectedRunId || ""}
+            onChange={(e) => loadListingsForRun(e.target.value, 0)}
           >
             <option value="">Seleziona una ricerca…</option>
             {runs.map((r) => (
@@ -195,66 +197,56 @@ export default function App() {
               </option>
             ))}
           </select>
-        </div>
-      )}
 
-      {/* RESULTS */}
-      {view === "results" && (
-        <div className="card">
-          <h3>Risultati</h3>
+          {selectedRunId && (
+            <>
+              <h3 style={{ marginTop: 24 }}>Risultati</h3>
 
-          {/* FILTER */}
-          <div style={{ display: "flex", gap: 12, marginBottom: 12 }}>
-            <input
-              placeholder="Prezzo min"
-              value={minPrice}
-              onChange={(e) => setMinPrice(e.target.value)}
-            />
-            <input
-              placeholder="Prezzo max"
-              value={maxPrice}
-              onChange={(e) => setMaxPrice(e.target.value)}
-            />
-            <button onClick={() => loadListings(selectedRun, 0)}>
-              Applica
-            </button>
-          </div>
+              <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                <input
+                  placeholder="Prezzo min"
+                  value={minPrice}
+                  onChange={(e) => setMinPrice(e.target.value)}
+                />
+                <input
+                  placeholder="Prezzo max"
+                  value={maxPrice}
+                  onChange={(e) => setMaxPrice(e.target.value)}
+                />
+                <button onClick={() => loadListingsForRun(selectedRunId, 0)}>
+                  Applica
+                </button>
+              </div>
 
-          {loading && <p className="muted">Caricamento…</p>}
+              <ul className="results">
+                {listings.map((l) => (
+                  <li key={l.id}>
+                    <a href={l.url} target="_blank" rel="noreferrer">
+                      {l.title}
+                    </a>{" "}
+                    – {l.city} ({l.province}) – €{l.price}
+                  </li>
+                ))}
+              </ul>
 
-          <ul className="results">
-            {listings.map((l) => (
-              <li key={l.id}>
-                <a href={l.url} target="_blank" rel="noreferrer">
-                  {l.title}
-                </a>{" "}
-                – {l.city} ({l.province}) – €{l.price}
-              </li>
-            ))}
-          </ul>
-
-          {listings.length > 0 && (
-            <div style={{ display: "flex", gap: 12, marginTop: 12 }}>
-              <button
-                disabled={page === 0}
-                onClick={() => {
-                  const p = page - 1;
-                  setPage(p);
-                  loadListings(selectedRun, p);
-                }}
-              >
-                ← Prev
-              </button>
-              <button
-                onClick={() => {
-                  const p = page + 1;
-                  setPage(p);
-                  loadListings(selectedRun, p);
-                }}
-              >
-                Next →
-              </button>
-            </div>
+              <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
+                <button
+                  disabled={page === 0}
+                  onClick={() =>
+                    loadListingsForRun(selectedRunId, page - 1)
+                  }
+                >
+                  ← Prev
+                </button>
+                <button
+                  onClick={() =>
+                    loadListingsForRun(selectedRunId, page + 1)
+                  }
+                >
+                  Next →
+                </button>
+              </div>
+            </>
           )}
         </div>
       )}
