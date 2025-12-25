@@ -8,6 +8,8 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [agency, setAgency] = useState(null);
 
+  const [view, setView] = useState("home"); // home | history | results
+
   const [runs, setRuns] = useState([]);
   const [selectedRun, setSelectedRun] = useState(null);
 
@@ -15,7 +17,8 @@ export default function App() {
   const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(false);
 
-  const [view, setView] = useState("dashboard"); // dashboard | history
+  const [minPrice, setMinPrice] = useState("");
+  const [maxPrice, setMaxPrice] = useState("");
 
   // ===== AUTH =====
   useEffect(() => {
@@ -59,12 +62,11 @@ export default function App() {
     setRuns(data || []);
   };
 
-  // ===== LOAD LISTINGS FOR RUN =====
+  // ===== LOAD LISTINGS (PAGINATED) =====
   const loadListings = async (run, pageIndex = 0) => {
     if (!run) return;
 
     setLoading(true);
-
     const from = pageIndex * PAGE_SIZE;
     const to = from + PAGE_SIZE - 1;
 
@@ -85,7 +87,16 @@ export default function App() {
       .eq("run_id", run.id)
       .range(from, to);
 
-    setListings(data ? data.map((r) => r.listings) : []);
+    let rows = data ? data.map((r) => r.listings) : [];
+
+    // 💰 FILTER PRICE (client-side)
+    rows = rows.filter((l) => {
+      if (minPrice && l.price < Number(minPrice)) return false;
+      if (maxPrice && l.price > Number(maxPrice)) return false;
+      return true;
+    });
+
+    setListings(rows);
     setLoading(false);
   };
 
@@ -117,8 +128,8 @@ export default function App() {
         <h2>Dashboard</h2>
         <p className="muted">{session.user.email}</p>
 
-        <div style={{ display: "flex", gap: 12, marginTop: 12 }}>
-          <button onClick={() => setView("dashboard")}>Dashboard</button>
+        <div style={{ display: "flex", gap: 12 }}>
+          <button onClick={() => setView("home")}>Dashboard</button>
           <button
             onClick={async () => {
               await loadRuns();
@@ -130,14 +141,84 @@ export default function App() {
         </div>
       </div>
 
-      {/* DASHBOARD */}
-      {view === "dashboard" && (
+      {/* HOME */}
+      {view === "home" && (
+        <div className="card">
+          <h3>Avvia ricerca</h3>
+
+          <button
+            onClick={async () => {
+              await fetch(
+                `${import.meta.env.VITE_BACKEND_URL}/run-agency`,
+                {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ agency_id: agency.id }),
+                }
+              );
+
+              await loadRuns();
+            }}
+          >
+            Avvia ricerca
+          </button>
+
+          {runs[0] && (
+            <p className="muted" style={{ marginTop: 12 }}>
+              Ultima ricerca:{" "}
+              {new Date(runs[0].created_at).toLocaleString()} –{" "}
+              {runs[0].new_listings_count} nuovi annunci
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* HISTORY */}
+      {view === "history" && (
+        <div className="card">
+          <h3>Le mie ricerche</h3>
+
+          <select
+            onChange={(e) => {
+              const run = runs.find((r) => r.id === e.target.value);
+              setSelectedRun(run);
+              setPage(0);
+              setView("results");
+              loadListings(run, 0);
+            }}
+          >
+            <option value="">Seleziona una ricerca…</option>
+            {runs.map((r) => (
+              <option key={r.id} value={r.id}>
+                {new Date(r.created_at).toLocaleString()} –{" "}
+                {r.new_listings_count} nuovi annunci
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {/* RESULTS */}
+      {view === "results" && (
         <div className="card">
           <h3>Risultati</h3>
 
-          {!selectedRun && (
-            <p className="muted">Seleziona una ricerca dallo storico</p>
-          )}
+          {/* FILTER */}
+          <div style={{ display: "flex", gap: 12, marginBottom: 12 }}>
+            <input
+              placeholder="Prezzo min"
+              value={minPrice}
+              onChange={(e) => setMinPrice(e.target.value)}
+            />
+            <input
+              placeholder="Prezzo max"
+              value={maxPrice}
+              onChange={(e) => setMaxPrice(e.target.value)}
+            />
+            <button onClick={() => loadListings(selectedRun, 0)}>
+              Applica
+            </button>
+          </div>
 
           {loading && <p className="muted">Caricamento…</p>}
 
@@ -152,7 +233,7 @@ export default function App() {
             ))}
           </ul>
 
-          {selectedRun && listings.length > 0 && (
+          {listings.length > 0 && (
             <div style={{ display: "flex", gap: 12, marginTop: 12 }}>
               <button
                 disabled={page === 0}
@@ -175,31 +256,6 @@ export default function App() {
               </button>
             </div>
           )}
-        </div>
-      )}
-
-      {/* HISTORY */}
-      {view === "history" && (
-        <div className="card">
-          <h3>Le mie ricerche</h3>
-
-          <select
-            onChange={(e) => {
-              const run = runs.find((r) => r.id === e.target.value);
-              setSelectedRun(run);
-              setPage(0);
-              loadListings(run, 0);
-              setView("dashboard"); // ✅ FIX CRITICO
-            }}
-          >
-            <option value="">Seleziona una ricerca…</option>
-            {runs.map((r) => (
-              <option key={r.id} value={r.id}>
-                {new Date(r.created_at).toLocaleString()} –{" "}
-                {r.new_listings_count} nuovi annunci
-              </option>
-            ))}
-          </select>
         </div>
       )}
 
