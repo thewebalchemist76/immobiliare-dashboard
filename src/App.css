@@ -20,27 +20,29 @@ body {
 }
 
 #root {
-  max-width: 1100px;
+  max-width: 1300px; /* ⬅️ più largo */
   margin: 0 auto;
-  padding: 40px 20px;
+  padding: 56px 32px;
 }
 
 /* ===== CARD ===== */
 .card {
   background: var(--card-bg);
-  border-radius: 16px;
-  padding: 28px;
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.12);
-  margin-bottom: 32px;
+  border-radius: 20px;
+  padding: 36px 40px;
+  box-shadow: 0 25px 50px rgba(0, 0, 0, 0.14);
+  margin-bottom: 40px;
 }
 
 /* ===== HEADERS ===== */
 h2 {
-  margin: 0 0 8px 0;
+  margin: 0 0 12px 0;
+  font-size: 28px;
 }
 
 h3 {
-  margin: 24px 0 16px;
+  margin: 32px 0 20px;
+  font-size: 20px;
 }
 
 .muted {
@@ -51,17 +53,17 @@ h3 {
 /* ===== FORM ===== */
 .search-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 12px;
-  margin-bottom: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); /* ⬅️ campi più larghi */
+  gap: 16px;
+  margin-bottom: 24px;
 }
 
 input,
 select {
-  padding: 10px 12px;
-  border-radius: 10px;
+  padding: 14px 16px;
+  border-radius: 12px;
   border: 1px solid var(--border);
-  font-size: 14px;
+  font-size: 15px;
 }
 
 input:focus,
@@ -74,8 +76,8 @@ select:focus {
 .checks {
   display: flex;
   flex-wrap: wrap;
-  gap: 14px;
-  margin-bottom: 16px;
+  gap: 18px;
+  margin-bottom: 24px;
 }
 
 .checks label {
@@ -83,7 +85,7 @@ select:focus {
   color: var(--muted);
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
 
 /* ===== BUTTON ===== */
@@ -91,21 +93,32 @@ button {
   background: var(--accent);
   color: white;
   border: none;
-  padding: 12px 18px;
-  border-radius: 12px;
+  padding: 14px 22px;
+  border-radius: 14px;
   font-weight: 600;
   cursor: pointer;
+  font-size: 15px;
 }
 
 button:hover {
-  opacity: 0.9;
+  opacity: 0.92;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 /* ===== RESULTS ===== */
+.results {
+  margin-top: 8px;
+}
+
 .results li {
   list-style: none;
-  padding: 12px 0;
+  padding: 16px 0;
   border-bottom: 1px solid var(--border);
+  line-height: 1.4;
 }
 
 .results a {
@@ -118,4 +131,5 @@ button:hover {
 .actions {
   display: flex;
   justify-content: flex-end;
+  margin-top: 24px;
 }
