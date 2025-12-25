@@ -58,7 +58,7 @@ export default function App() {
     setRuns(data || []);
   };
 
-  // ===== LOAD LISTINGS FOR RUN =====
+  // ===== LOAD LISTINGS (PREZZO FIXATO) =====
   const loadListingsForRun = async (runId, pageIndex = 0) => {
     setLoading(true);
     setSelectedRunId(runId);
@@ -68,7 +68,7 @@ export default function App() {
       .from("agency_run_listings")
       .select(
         `
-        listings (
+        listings!inner (
           id,
           title,
           city,
@@ -85,11 +85,11 @@ export default function App() {
       );
 
     if (minPrice) {
-      query = query.gte("price", minPrice, { foreignTable: "listings" });
+      query = query.gte("listings.price", Number(minPrice));
     }
 
     if (maxPrice) {
-      query = query.lte("price", maxPrice, { foreignTable: "listings" });
+      query = query.lte("listings.price", Number(maxPrice));
     }
 
     const { data, error } = await query;
