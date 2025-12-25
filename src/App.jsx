@@ -38,6 +38,13 @@ export default function App() {
       .then(({ data }) => setAgency(data));
   }, [session]);
 
+  // ===== AUTO LOAD RUNS =====
+  useEffect(() => {
+    if (agency && view === "history") {
+      loadMyRuns();
+    }
+  }, [agency, view]);
+
   const signIn = async (email) => {
     await supabase.auth.signInWithOtp({
       email,
@@ -62,7 +69,7 @@ export default function App() {
     setRuns(data || []);
   };
 
-  // ===== LOAD LISTINGS BY RUN DATE =====
+  // ===== LOAD LISTINGS BY RUN =====
   const loadListingsForRun = async (runId) => {
     setLoading(true);
     setListings([]);
@@ -125,25 +132,18 @@ export default function App() {
 
   return (
     <div>
-      {/* HEADER */}
       <div className="card">
         <h2>Dashboard</h2>
         <p className="muted">Loggato come {session.user.email}</p>
 
         <div style={{ display: "flex", gap: 12, marginTop: 12 }}>
           <button onClick={() => setView("search")}>Dashboard</button>
-          <button
-            onClick={async () => {
-              await loadMyRuns();
-              setView("history");
-            }}
-          >
+          <button onClick={() => setView("history")}>
             Le mie ricerche
           </button>
         </div>
       </div>
 
-      {/* SEARCH / RESULTS */}
       {view === "search" && (
         <div className="card">
           <h3>Risultati</h3>
@@ -167,7 +167,6 @@ export default function App() {
         </div>
       )}
 
-      {/* HISTORY */}
       {view === "history" && (
         <div className="card">
           <h3>Le mie ricerche</h3>
@@ -181,7 +180,6 @@ export default function App() {
             }}
           >
             <option value="">Seleziona una ricerca…</option>
-
             {runs.map((r) => (
               <option key={r.id} value={r.id}>
                 {new Date(r.created_at).toLocaleString()} –{" "}
