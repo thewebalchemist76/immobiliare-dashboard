@@ -12,7 +12,7 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [agency, setAgency] = useState(null);
 
-  const [view, setView] = useState("dashboard"); // dashboard | history
+  const [view, setView] = useState("dashboard");
   const [runs, setRuns] = useState([]);
   const [selectedRun, setSelectedRun] = useState(null);
 
@@ -28,9 +28,6 @@ export default function App() {
   const [loadingRun, setLoadingRun] = useState(false);
   const [runMsg, setRunMsg] = useState("");
 
-  const [runNotReady, setRunNotReady] = useState(false);
-  const [runReadyMsg, setRunReadyMsg] = useState("");
-
   const pollRef = useRef(null);
 
   /* ================= AUTH ================= */
@@ -40,10 +37,13 @@ export default function App() {
     return () => data.subscription.unsubscribe();
   }, []);
 
+  const signOut = async () => {
+    await supabase.auth.signOut();
+  };
+
   /* ================= AGENCY ================= */
   useEffect(() => {
     if (!session) return;
-
     supabase
       .from("agencies")
       .select("*")
@@ -55,13 +55,11 @@ export default function App() {
   /* ================= RUNS ================= */
   const loadRuns = async () => {
     if (!agency?.id) return [];
-
     const { data } = await supabase
       .from("agency_runs")
       .select("id, created_at, new_listings_count, total_listings")
       .eq("agency_id", agency.id)
       .order("created_at", { ascending: false });
-
     setRuns(data || []);
     return data || [];
   };
@@ -69,11 +67,6 @@ export default function App() {
   useEffect(() => {
     if (agency?.id) loadRuns();
   }, [agency?.id]);
-
-  const stopPolling = () => {
-    if (pollRef.current) clearInterval(pollRef.current);
-    pollRef.current = null;
-  };
 
   const getRunLinksCount = async (runId) => {
     const { count } = await supabase
@@ -83,26 +76,9 @@ export default function App() {
     return count || 0;
   };
 
-  const ensureRunReady = async (run, showMsg = false) => {
-    if (!run?.total_listings) return true;
-    const current = await getRunLinksCount(run.id);
-    const ready = current >= run.total_listings;
-
-    if (showMsg && !ready) {
-      setRunNotReady(true);
-      setRunReadyMsg(`Caricamento in corso… (${current}/${run.total_listings})`);
-    }
-    if (ready) {
-      setRunNotReady(false);
-      setRunReadyMsg("");
-    }
-    return ready;
-  };
-
   /* ================= START RUN ================= */
   const startRun = async () => {
     if (!agency?.id) return;
-
     setLoadingRun(true);
     setRunMsg("Ricerca in corso…");
 
@@ -117,7 +93,7 @@ export default function App() {
     if (!latest) return;
 
     const interval = setInterval(async () => {
-      const ok = await ensureRunReady(latest);
+      const ok = (await getRunLinksCount(latest.id)) >= latest.total_listings;
       if (ok) {
         clearInterval(interval);
         setLoadingRun(false);
@@ -130,12 +106,8 @@ export default function App() {
   /* ================= LOAD LISTINGS ================= */
   const loadListingsForRun = async (run, resetPage = true, pageOverride = null) => {
     if (!run) return;
-
     setSelectedRun(run);
     if (resetPage) setPage(0);
-
-    const ready = await ensureRunReady(run, true);
-    if (!ready) return;
 
     setLoadingListings(true);
 
@@ -177,7 +149,6 @@ export default function App() {
     const to = from + PAGE_SIZE - 1;
 
     const { data } = await dataQuery.range(from, to);
-
     setListings(data || []);
     setLoadingListings(false);
   };
@@ -243,19 +214,10 @@ export default function App() {
             ))}
           </select>
 
-          {selectedRun && (
-            <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
-              <input placeholder="Prezzo min" value={priceMin} onChange={(e) => setPriceMin(e.target.value)} />
-              <input placeholder="Prezzo max" value={priceMax} onChange={(e) => setPriceMax(e.target.value)} />
-              <button onClick={() => loadListingsForRun(selectedRun, true, 0)}>Applica</button>
-            </div>
-          )}
-
           <ul className="results">
             {listings.map((l) => {
-              const raw = l.raw; // ✅ jsonb → oggetto
+              const raw = l.raw;
               const img = raw?.media?.images?.[0]?.sd;
-
               const meta = [
                 raw?.contract?.name,
                 raw?.analytics?.advertiser,
@@ -293,11 +255,9 @@ export default function App() {
               >
                 ← Prev
               </button>
-
               <span className="muted">
                 Pagina {page + 1} / {totalPages}
               </span>
-
               <button
                 disabled={page + 1 >= totalPages}
                 onClick={() => {
@@ -312,6 +272,11 @@ export default function App() {
           )}
         </div>
       )}
+
+      {/* ✅ LOGOUT RIPRISTINATO */}
+      <div className="actions">
+        <button onClick={signOut}>Logout</button>
+      </div>
     </div>
   );
 }
