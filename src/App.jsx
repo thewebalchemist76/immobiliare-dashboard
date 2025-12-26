@@ -28,6 +28,11 @@ export default function App() {
   const [sortBy, setSortBy] = useState("price");
   const [sortDir, setSortDir] = useState("asc");
 
+  const [loadingRun, setLoadingRun] = useState(false);
+  const [runMsg, setRunMsg] = useState("");
+
+  const pollRef = useRef(null);
+
   /* ================= AUTH ================= */
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
@@ -53,7 +58,7 @@ export default function App() {
     if (!agency?.id) return [];
     const { data } = await supabase
       .from("agency_runs")
-      .select("id, created_at, new_listings_count")
+      .select("id, created_at, new_listings_count, total_listings")
       .eq("agency_id", agency.id)
       .order("created_at", { ascending: false });
     setRuns(data || []);
@@ -63,6 +68,42 @@ export default function App() {
   useEffect(() => {
     if (agency?.id) loadRuns();
   }, [agency?.id]);
+
+  const getRunLinksCount = async (runId) => {
+    const { count } = await supabase
+      .from("agency_run_listings")
+      .select("run_id", { count: "exact", head: true })
+      .eq("run_id", runId);
+    return count || 0;
+  };
+
+  /* ================= START RUN (DASHBOARD) ================= */
+  const startRun = async () => {
+    if (!agency?.id) return;
+
+    setLoadingRun(true);
+    setRunMsg("Ricerca in corso…");
+
+    await fetch(`${BACKEND_URL}/run-agency`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agency_id: agency.id }),
+    });
+
+    const updated = await loadRuns();
+    const latest = updated?.[0];
+    if (!latest) return;
+
+    const interval = setInterval(async () => {
+      const ok = (await getRunLinksCount(latest.id)) >= latest.total_listings;
+      if (ok) {
+        clearInterval(interval);
+        setLoadingRun(false);
+        setRunMsg("");
+        loadRuns();
+      }
+    }, POLL_INTERVAL_MS);
+  };
 
   /* ================= LOAD LISTINGS ================= */
   const loadListingsForRun = async (run, resetPage = true, pageOverride = null) => {
@@ -167,6 +208,18 @@ export default function App() {
         </div>
       </div>
 
+      {/* DASHBOARD */}
+      {view === "dashboard" && (
+        <div className="card">
+          <h3>Avvia ricerca</h3>
+          <button onClick={startRun} disabled={loadingRun}>
+            Avvia ricerca
+          </button>
+          {runMsg && <p className="muted">{runMsg}</p>}
+        </div>
+      )}
+
+      {/* HISTORY */}
       {view === "history" && (
         <div className="card">
           <h3>Le mie ricerche</h3>
@@ -186,7 +239,6 @@ export default function App() {
             ))}
           </select>
 
-          {/* FILTRI */}
           {selectedRun && (
             <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
               <input
@@ -202,13 +254,15 @@ export default function App() {
               <button onClick={() => loadListingsForRun(selectedRun, true, 0)}>
                 Applica
               </button>
-              <button onClick={resetFilters} style={{ background: "#e5e7eb", color: "#111" }}>
+              <button
+                onClick={resetFilters}
+                style={{ background: "#e5e7eb", color: "#111" }}
+              >
                 Reset
               </button>
             </div>
           )}
 
-          {/* HEADER TABELLA */}
           {listings.length > 0 && (
             <div className="table-header sticky">
               <span onClick={() => toggleSort("price")}>Annuncio</span>
