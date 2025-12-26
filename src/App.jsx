@@ -125,7 +125,6 @@ export default function App() {
 
     const ids = links.map((l) => l.listing_id);
 
-    /* ===== COUNT (con filtri prezzo) ===== */
     let countQuery = supabase
       .from("listings")
       .select("id", { count: "exact", head: true })
@@ -137,7 +136,6 @@ export default function App() {
     const { count } = await countQuery;
     setTotalCount(count || 0);
 
-    /* ===== DATA ===== */
     let dataQuery = supabase
       .from("listings")
       .select("id, title, city, province, price, url, raw")
@@ -223,7 +221,7 @@ export default function App() {
             ))}
           </select>
 
-          {/* ✅ FILTRI PREZZO RIPRISTINATI */}
+          {/* FILTRI PREZZO */}
           {selectedRun && (
             <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
               <input
@@ -242,31 +240,36 @@ export default function App() {
             </div>
           )}
 
+          {/* HEADER TABELLA */}
+          {listings.length > 0 && (
+            <div className="table-header">
+              <span>Annuncio</span>
+              <span>Categoria</span>
+              <span>Tipo</span>
+              <span>Nome Agenzia / Privato</span>
+            </div>
+          )}
+
           <ul className="results">
             {listings.map((l) => {
               const raw = l.raw;
               const img = raw?.media?.images?.[0]?.sd;
-              const meta = [
-                raw?.contract?.name,
-                raw?.analytics?.advertiser,
-                raw?.analytics?.agencyName,
-              ].filter(Boolean);
 
               return (
-                <li key={l.id} className="result-row">
+                <li key={l.id} className="result-row table-row">
                   {img && <img className="thumb" src={img} alt="" />}
-                  <div className="result-main">
-                    <div className="title-line">
+
+                  <div className="table-grid">
+                    <div>
                       <a href={l.url} target="_blank" rel="noreferrer">
                         {l.title}
-                      </a>
-                      <span className="right-info">
-                        {l.city} ({l.province}) – €{l.price}
-                      </span>
-                      {meta.length > 0 && (
-                        <span className="right-meta">{meta.join(" • ")}</span>
-                      )}
+                      </a>{" "}
+                      – {l.city} ({l.province}) – €{l.price}
                     </div>
+
+                    <div>{raw?.typology?.name || "—"}</div>
+                    <div>{raw?.contract?.name || "—"}</div>
+                    <div>{raw?.analytics?.agencyName || raw?.analytics?.advertiser || "—"}</div>
                   </div>
                 </li>
               );
