@@ -177,9 +177,14 @@ export default function App() {
 
   return (
     <div>
+      {/* HEADER */}
       <div className="card">
-        <h2>Dashboard</h2>
-        <div style={{ display: "flex", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 16 }}>
+          <h2 style={{ margin: 0 }}>Dashboard</h2>
+          <span className="muted">{session.user.email}</span>
+        </div>
+
+        <div style={{ display: "flex", gap: 12, marginTop: 24 }}>
           <button onClick={() => setView("dashboard")}>Dashboard</button>
           <button onClick={() => setView("history")}>Le mie ricerche</button>
         </div>
@@ -273,7 +278,6 @@ export default function App() {
         </div>
       )}
 
-      {/* ✅ LOGOUT RIPRISTINATO */}
       <div className="actions">
         <button onClick={signOut}>Logout</button>
       </div>
