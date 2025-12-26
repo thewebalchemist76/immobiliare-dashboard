@@ -114,7 +114,7 @@ button:disabled {
 .result-row {
   display: flex;
   gap: 16px;
-  padding: 24px 0;
+  padding: 18px 0;
   border-bottom: 1px solid var(--border);
 }
 
@@ -126,17 +126,18 @@ button:disabled {
   flex-shrink: 0;
 }
 
-/* contenitore testo annuncio */
 .result-main {
   flex: 1;
+  min-width: 0;
 }
 
-/* riga titolo + prezzo/città */
+/* UNA riga: titolo a sinistra, tutto il resto a destra */
 .title-line {
   display: flex;
-  gap: 12px;
   align-items: baseline;
-  flex-wrap: wrap;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
 }
 
 .title-line a {
@@ -144,21 +145,26 @@ button:disabled {
   color: var(--accent);
   font-weight: 600;
   font-size: 15px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 260px;
 }
 
-.price {
-  font-size: 14px;
+.right-info {
   color: #374151;
+  font-size: 14px;
+  white-space: nowrap;
 }
 
-/* metadati orizzontali sotto il titolo */
-.inline-meta {
-  margin-top: 4px;
-  font-size: 13px;
+.right-meta {
+  margin-left: auto; /* spinge a destra */
   color: var(--muted);
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 60%;
 }
 
 /* ===== FOOTER ACTIONS ===== */
