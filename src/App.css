@@ -112,13 +112,6 @@ button:disabled {
   cursor: pointer;
 }
 
-.table-header.sticky {
-  position: sticky;
-  top: 0;
-  background: #fff;
-  z-index: 10;
-}
-
 .table-grid-3 {
   display: grid;
   grid-template-columns: 2fr 1fr 2fr;
@@ -134,7 +127,7 @@ button:disabled {
 }
 
 /* ===================================================== */
-/* ===== CRM TABLE ESTESA CON COLONNE STICKY ============ */
+/* ===== CRM TABLE ESTESA (NO STICKY) ================== */
 /* ===================================================== */
 
 .table-wrap {
@@ -159,45 +152,17 @@ button:disabled {
   background: #fff;
 }
 
-/* Header sticky */
 .crm-table thead th {
-  position: sticky;
-  top: 0;
-  z-index: 30;
-  background: #ffffff;
   font-weight: 600;
   color: #374151;
 }
 
-/* ===== Sticky columns (left) ===== */
-.crm-table .sticky {
-  position: sticky;
-  left: 0;
-  z-index: 25;
-  background: #ffffff;
-}
-
-/* offset progressivi (DEVONO combaciare con ordine colonne) */
-.crm-table .c1 { left: 0px; }        /* Data acquisizione */
-.crm-table .c2 { left: 140px; }      /* Ultimo aggiornamento */
-.crm-table .c3 { left: 280px; }      /* Titolo */
-.crm-table .c4 { left: 520px; }      /* Link */
-.crm-table .c5 { left: 600px; }      /* Prezzo */
-.crm-table .c6 { left: 720px; }      /* Contratto */
-
-/* separatore visivo tra sticky e scroll */
-.crm-table .c6 {
-  box-shadow: 4px 0 6px -2px rgba(0,0,0,0.08);
-}
-
-/* links */
 .crm-table a {
   color: var(--accent);
   font-weight: 600;
   text-decoration: none;
 }
 
-/* mini foto */
 .mini-thumb {
   width: 48px;
   height: 36px;
