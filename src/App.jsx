@@ -25,10 +25,8 @@ export default function App() {
   const [page, setPage] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
 
-  const [loadingRun, setLoadingRun] = useState(false);
-  const [runMsg, setRunMsg] = useState("");
-
-  const pollRef = useRef(null);
+  const [sortBy, setSortBy] = useState("price");
+  const [sortDir, setSortDir] = useState("asc");
 
   /* ================= AUTH ================= */
   useEffect(() => {
@@ -37,9 +35,7 @@ export default function App() {
     return () => data.subscription.unsubscribe();
   }, []);
 
-  const signOut = async () => {
-    await supabase.auth.signOut();
-  };
+  const signOut = async () => supabase.auth.signOut();
 
   /* ================= AGENCY ================= */
   useEffect(() => {
@@ -57,7 +53,7 @@ export default function App() {
     if (!agency?.id) return [];
     const { data } = await supabase
       .from("agency_runs")
-      .select("id, created_at, new_listings_count, total_listings")
+      .select("id, created_at, new_listings_count")
       .eq("agency_id", agency.id)
       .order("created_at", { ascending: false });
     setRuns(data || []);
@@ -67,42 +63,6 @@ export default function App() {
   useEffect(() => {
     if (agency?.id) loadRuns();
   }, [agency?.id]);
-
-  const getRunLinksCount = async (runId) => {
-    const { count } = await supabase
-      .from("agency_run_listings")
-      .select("run_id", { count: "exact", head: true })
-      .eq("run_id", runId);
-    return count || 0;
-  };
-
-  /* ================= START RUN ================= */
-  const startRun = async () => {
-    if (!agency?.id) return;
-
-    setLoadingRun(true);
-    setRunMsg("Ricerca in corso…");
-
-    await fetch(`${BACKEND_URL}/run-agency`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ agency_id: agency.id }),
-    });
-
-    const updated = await loadRuns();
-    const latest = updated?.[0];
-    if (!latest) return;
-
-    const interval = setInterval(async () => {
-      const ok = (await getRunLinksCount(latest.id)) >= latest.total_listings;
-      if (ok) {
-        clearInterval(interval);
-        setLoadingRun(false);
-        setRunMsg("");
-        loadRuns();
-      }
-    }, POLL_INTERVAL_MS);
-  };
 
   /* ================= LOAD LISTINGS ================= */
   const loadListingsForRun = async (run, resetPage = true, pageOverride = null) => {
@@ -140,7 +100,7 @@ export default function App() {
       .from("listings")
       .select("id, title, city, province, price, url, raw")
       .in("id", ids)
-      .order("price", { ascending: true });
+      .order(sortBy, { ascending: sortDir === "asc" });
 
     if (priceMin) dataQuery = dataQuery.gte("price", Number(priceMin));
     if (priceMax) dataQuery = dataQuery.lte("price", Number(priceMax));
@@ -150,9 +110,24 @@ export default function App() {
     const to = from + PAGE_SIZE - 1;
 
     const { data } = await dataQuery.range(from, to);
-
     setListings(data || []);
     setLoadingListings(false);
+  };
+
+  const toggleSort = (field) => {
+    if (sortBy === field) {
+      setSortDir(sortDir === "asc" ? "desc" : "asc");
+    } else {
+      setSortBy(field);
+      setSortDir("asc");
+    }
+    if (selectedRun) loadListingsForRun(selectedRun, true, 0);
+  };
+
+  const resetFilters = () => {
+    setPriceMin("");
+    setPriceMax("");
+    if (selectedRun) loadListingsForRun(selectedRun, true, 0);
   };
 
   if (!session) {
@@ -192,16 +167,6 @@ export default function App() {
         </div>
       </div>
 
-      {view === "dashboard" && (
-        <div className="card">
-          <h3>Avvia ricerca</h3>
-          <button onClick={startRun} disabled={loadingRun}>
-            Avvia ricerca
-          </button>
-          {runMsg && <p className="muted">{runMsg}</p>}
-        </div>
-      )}
-
       {view === "history" && (
         <div className="card">
           <h3>Le mie ricerche</h3>
@@ -221,7 +186,7 @@ export default function App() {
             ))}
           </select>
 
-          {/* FILTRI PREZZO */}
+          {/* FILTRI */}
           {selectedRun && (
             <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
               <input
@@ -237,16 +202,20 @@ export default function App() {
               <button onClick={() => loadListingsForRun(selectedRun, true, 0)}>
                 Applica
               </button>
+              <button onClick={resetFilters} style={{ background: "#e5e7eb", color: "#111" }}>
+                Reset
+              </button>
             </div>
           )}
 
           {/* HEADER TABELLA */}
           {listings.length > 0 && (
-            <div className="table-header">
-              <span>Annuncio</span>
-              <span>Categoria</span>
-              <span>Tipo</span>
-              <span>Nome Agenzia / Privato</span>
+            <div className="table-header sticky">
+              <span onClick={() => toggleSort("price")}>Annuncio</span>
+              <span onClick={() => toggleSort("raw->contract->name")}>Tipo</span>
+              <span onClick={() => toggleSort("raw->analytics->agencyName")}>
+                Nome Agenzia / Privato
+              </span>
             </div>
           )}
 
@@ -256,53 +225,52 @@ export default function App() {
               const img = raw?.media?.images?.[0]?.sd;
 
               return (
-                <li key={l.id} className="result-row table-row">
+                <li key={l.id} className="result-row">
                   {img && <img className="thumb" src={img} alt="" />}
-
-                  <div className="table-grid">
+                  <div className="table-grid-3">
                     <div>
                       <a href={l.url} target="_blank" rel="noreferrer">
                         {l.title}
                       </a>{" "}
                       – {l.city} ({l.province}) – €{l.price}
                     </div>
-
-                    <div>{raw?.typology?.name || "—"}</div>
                     <div>{raw?.contract?.name || "—"}</div>
-                    <div>{raw?.analytics?.agencyName || raw?.analytics?.advertiser || "—"}</div>
+                    <div>
+                      {raw?.analytics?.agencyName ||
+                        raw?.analytics?.advertiser ||
+                        "—"}
+                    </div>
                   </div>
                 </li>
               );
             })}
           </ul>
 
-          {listings.length > 0 && (
-            <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-              <button
-                disabled={page === 0}
-                onClick={() => {
-                  const p = page - 1;
-                  setPage(p);
-                  loadListingsForRun(selectedRun, false, p);
-                }}
-              >
-                ← Prev
-              </button>
-              <span className="muted">
-                Pagina {page + 1} / {totalPages}
-              </span>
-              <button
-                disabled={page + 1 >= totalPages}
-                onClick={() => {
-                  const p = page + 1;
-                  setPage(p);
-                  loadListingsForRun(selectedRun, false, p);
-                }}
-              >
-                Next →
-              </button>
-            </div>
-          )}
+          <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+            <button
+              disabled={page === 0}
+              onClick={() => {
+                const p = page - 1;
+                setPage(p);
+                loadListingsForRun(selectedRun, false, p);
+              }}
+            >
+              ← Prev
+            </button>
+            <span className="muted">
+              Pagina {page + 1} / {totalPages}
+            </span>
+            <button
+              disabled={page + 1 >= totalPages}
+              onClick={() => {
+                const p = page + 1;
+                setPage(p);
+                loadListingsForRun(selectedRun, false, p);
+              }}
+            >
+              Next →
+            </button>
+          </div>
         </div>
       )}
 

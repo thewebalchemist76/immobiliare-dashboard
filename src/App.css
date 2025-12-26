@@ -106,3 +106,33 @@ button {
   justify-content: flex-end;
   margin-top: 40px;
 }
+
+.table-header {
+  display: grid;
+  grid-template-columns: 2fr 1fr 2fr;
+  gap: 16px;
+  font-size: 13px;
+  color: var(--muted);
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+  margin-top: 24px;
+}
+
+.table-header span {
+  cursor: pointer;
+}
+
+.table-header.sticky {
+  position: sticky;
+  top: 0;
+  background: #fff;
+  z-index: 10;
+}
+
+.table-grid-3 {
+  display: grid;
+  grid-template-columns: 2fr 1fr 2fr;
+  gap: 16px;
+  align-items: center;
+  width: 100%;
+}
