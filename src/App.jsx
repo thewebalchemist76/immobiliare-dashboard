@@ -5,6 +5,13 @@ import "./App.css";
 const PAGE_SIZE = 20;
 const POLL_INTERVAL_MS = 5000;
 
+const fmtDate = (d) => {
+  if (!d) return "";
+  const dt = new Date(d);
+  if (isNaN(dt)) return "";
+  return dt.toLocaleDateString("it-IT");
+};
+
 export default function App() {
   const BACKEND_URL =
     import.meta.env.VITE_BACKEND_URL || "https://immobiliare-backend.onrender.com";
@@ -24,9 +31,6 @@ export default function App() {
 
   const [page, setPage] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
-
-  const [sortBy, setSortBy] = useState("price");
-  const [sortDir, setSortDir] = useState("asc");
 
   const [loadingRun, setLoadingRun] = useState(false);
   const [runMsg, setRunMsg] = useState("");
@@ -77,7 +81,7 @@ export default function App() {
     return count || 0;
   };
 
-  /* ================= START RUN (DASHBOARD) ================= */
+  /* ================= START RUN ================= */
   const startRun = async () => {
     if (!agency?.id) return;
 
@@ -139,9 +143,9 @@ export default function App() {
 
     let dataQuery = supabase
       .from("listings")
-      .select("id, title, city, province, price, url, raw")
+      .select("id, title, city, province, price, url, raw, first_seen_at")
       .in("id", ids)
-      .order(sortBy, { ascending: sortDir === "asc" });
+      .order("price", { ascending: true });
 
     if (priceMin) dataQuery = dataQuery.gte("price", Number(priceMin));
     if (priceMax) dataQuery = dataQuery.lte("price", Number(priceMax));
@@ -153,16 +157,6 @@ export default function App() {
     const { data } = await dataQuery.range(from, to);
     setListings(data || []);
     setLoadingListings(false);
-  };
-
-  const toggleSort = (field) => {
-    if (sortBy === field) {
-      setSortDir(sortDir === "asc" ? "desc" : "asc");
-    } else {
-      setSortBy(field);
-      setSortDir("asc");
-    }
-    if (selectedRun) loadListingsForRun(selectedRun, true, 0);
   };
 
   const resetFilters = () => {
@@ -263,44 +257,73 @@ export default function App() {
             </div>
           )}
 
-          {listings.length > 0 && (
-            <div className="table-header sticky">
-              <span onClick={() => toggleSort("price")}>Annuncio</span>
-              <span onClick={() => toggleSort("raw->contract->name")}>Tipo</span>
-              <span onClick={() => toggleSort("raw->analytics->agencyName")}>
-                Nome Agenzia / Privato
-              </span>
-            </div>
-          )}
+          <div className="table-wrap">
+            <table className="crm-table">
+              <thead>
+                <tr>
+                  <th>Data</th>
+                  <th>Data agg.</th>
+                  <th>Portale</th>
+                  <th>Telefono</th>
+                  <th>Data agg. annuncio</th>
+                  <th>Foto</th>
+                  <th>Link</th>
+                  <th>Agenzia / Privato</th>
+                  <th>Prezzo 1° uscita</th>
+                  <th>Ultimo prezzo</th>
+                  <th>Via</th>
+                  <th>Civ</th>
+                  <th>Vani</th>
+                  <th>WC</th>
+                  <th>P.</th>
+                  <th>Terrazzo/Balcone</th>
+                  <th>Box/Posto auto</th>
+                  <th>Stato immobile</th>
+                  <th>Data contatto</th>
+                  <th>Nome proprietario</th>
+                  <th>Descrizione</th>
+                  <th>Zona</th>
+                </tr>
+              </thead>
+              <tbody>
+                {listings.map((l) => {
+                  const r = l.raw || {};
+                  const img = r?.media?.images?.[0]?.sd;
 
-          <ul className="results">
-            {listings.map((l) => {
-              const raw = l.raw;
-              const img = raw?.media?.images?.[0]?.sd;
+                  return (
+                    <tr key={l.id}>
+                      <td>{fmtDate(l.first_seen_at)}</td>
+                      <td>{fmtDate(r.lastModified * 1000)}</td>
+                      <td>{l.url?.includes("immobiliare") ? "immobiliare.it" : ""}</td>
+                      <td></td>
+                      <td>{fmtDate(r.creationDate * 1000)}</td>
+                      <td>{img && <img src={img} className="mini-thumb" />}</td>
+                      <td>
+                        <a href={l.url} target="_blank" rel="noreferrer">link</a>
+                      </td>
+                      <td>{r.analytics?.agencyName || r.analytics?.advertiser || ""}</td>
+                      <td>{r.price?.startPrice || ""}</td>
+                      <td>{l.price ? `€ ${l.price}` : ""}</td>
+                      <td>{r.geography?.street || ""}</td>
+                      <td></td>
+                      <td>{r.topology?.rooms || ""}</td>
+                      <td>{r.topology?.bathrooms || ""}</td>
+                      <td>{r.topology?.floor || ""}</td>
+                      <td>{r.topology?.balcony ? "Sì" : ""}</td>
+                      <td></td>
+                      <td>{r.analytics?.propertyStatus || ""}</td>
+                      <td></td>
+                      <td></td>
+                      <td></td>
+                      <td>{r.analytics?.macrozone || ""}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
 
-              return (
-                <li key={l.id} className="result-row">
-                  {img && <img className="thumb" src={img} alt="" />}
-                  <div className="table-grid-3">
-                    <div>
-                      <a href={l.url} target="_blank" rel="noreferrer">
-                        {l.title}
-                      </a>{" "}
-                      – {l.city} ({l.province}) – €{l.price}
-                    </div>
-                    <div>{raw?.contract?.name || "—"}</div>
-                    <div>
-                      {raw?.analytics?.agencyName ||
-                        raw?.analytics?.advertiser ||
-                        "—"}
-                    </div>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-
-          <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+          <div style={{ display: "flex", gap: 12, alignItems: "center", marginTop: 16 }}>
             <button
               disabled={page === 0}
               onClick={() => {
