@@ -79,6 +79,7 @@ export default function App() {
   /* ================= START RUN ================= */
   const startRun = async () => {
     if (!agency?.id) return;
+
     setLoadingRun(true);
     setRunMsg("Ricerca in corso…");
 
@@ -106,9 +107,9 @@ export default function App() {
   /* ================= LOAD LISTINGS ================= */
   const loadListingsForRun = async (run, resetPage = true, pageOverride = null) => {
     if (!run) return;
+
     setSelectedRun(run);
     if (resetPage) setPage(0);
-
     setLoadingListings(true);
 
     const { data: links } = await supabase
@@ -124,6 +125,7 @@ export default function App() {
 
     const ids = links.map((l) => l.listing_id);
 
+    /* ===== COUNT (con filtri prezzo) ===== */
     let countQuery = supabase
       .from("listings")
       .select("id", { count: "exact", head: true })
@@ -135,6 +137,7 @@ export default function App() {
     const { count } = await countQuery;
     setTotalCount(count || 0);
 
+    /* ===== DATA ===== */
     let dataQuery = supabase
       .from("listings")
       .select("id, title, city, province, price, url, raw")
@@ -149,6 +152,7 @@ export default function App() {
     const to = from + PAGE_SIZE - 1;
 
     const { data } = await dataQuery.range(from, to);
+
     setListings(data || []);
     setLoadingListings(false);
   };
@@ -219,6 +223,25 @@ export default function App() {
             ))}
           </select>
 
+          {/* ✅ FILTRI PREZZO RIPRISTINATI */}
+          {selectedRun && (
+            <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
+              <input
+                placeholder="Prezzo min"
+                value={priceMin}
+                onChange={(e) => setPriceMin(e.target.value)}
+              />
+              <input
+                placeholder="Prezzo max"
+                value={priceMax}
+                onChange={(e) => setPriceMax(e.target.value)}
+              />
+              <button onClick={() => loadListingsForRun(selectedRun, true, 0)}>
+                Applica
+              </button>
+            </div>
+          )}
+
           <ul className="results">
             {listings.map((l) => {
               const raw = l.raw;
@@ -234,7 +257,9 @@ export default function App() {
                   {img && <img className="thumb" src={img} alt="" />}
                   <div className="result-main">
                     <div className="title-line">
-                      <a href={l.url} target="_blank" rel="noreferrer">{l.title}</a>
+                      <a href={l.url} target="_blank" rel="noreferrer">
+                        {l.title}
+                      </a>
                       <span className="right-info">
                         {l.city} ({l.province}) – €{l.price}
                       </span>
