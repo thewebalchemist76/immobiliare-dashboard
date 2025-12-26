@@ -12,7 +12,7 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [agency, setAgency] = useState(null);
 
-  const [view, setView] = useState("dashboard"); // dashboard | history
+  const [view, setView] = useState("dashboard");
   const [runs, setRuns] = useState([]);
   const [selectedRun, setSelectedRun] = useState(null);
 
@@ -25,11 +25,9 @@ export default function App() {
   const [page, setPage] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
 
-  // Dashboard run status
   const [loadingRun, setLoadingRun] = useState(false);
   const [runMsg, setRunMsg] = useState("");
 
-  // History “run not ready yet”
   const [runNotReady, setRunNotReady] = useState(false);
   const [runReadyMsg, setRunReadyMsg] = useState("");
 
@@ -45,7 +43,6 @@ export default function App() {
   /* ================= AGENCY ================= */
   useEffect(() => {
     if (!session) return;
-
     supabase
       .from("agencies")
       .select("*")
@@ -57,26 +54,17 @@ export default function App() {
   /* ================= RUNS ================= */
   const loadRuns = async () => {
     if (!agency?.id) return [];
-
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from("agency_runs")
       .select("id, created_at, apify_run_id, new_listings_count, total_listings")
       .eq("agency_id", agency.id)
       .order("created_at", { ascending: false });
-
-    if (error) {
-      console.error("loadRuns:", error.message);
-      setRuns([]);
-      return [];
-    }
-
     setRuns(data || []);
     return data || [];
   };
 
   useEffect(() => {
     if (agency?.id) loadRuns();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agency?.id]);
 
   const stopPolling = () => {
@@ -85,45 +73,30 @@ export default function App() {
   };
 
   const getRunLinksCount = async (runId) => {
-    const { count, error } = await supabase
+    const { count } = await supabase
       .from("agency_run_listings")
       .select("run_id", { count: "exact", head: true })
       .eq("run_id", runId);
-
-    if (error) {
-      console.error("getRunLinksCount:", error.message);
-      return 0;
-    }
     return count || 0;
   };
 
   const ensureRunReady = async (run, { showHistoryMsg = false } = {}) => {
-    // Se non abbiamo total_listings, non possiamo sapere “ready”: procediamo.
     if (!run?.total_listings || run.total_listings <= 0) return true;
-
     const current = await getRunLinksCount(run.id);
     const ready = current >= run.total_listings;
-
     if (showHistoryMsg) {
-      if (!ready) {
-        setRunNotReady(true);
-        setRunReadyMsg(
-          `Caricamento in corso… (${current}/${run.total_listings})`
-        );
-      } else {
-        setRunNotReady(false);
-        setRunReadyMsg("");
-      }
+      setRunNotReady(!ready);
+      setRunReadyMsg(
+        ready ? "" : `Caricamento in corso… (${current}/${run.total_listings})`
+      );
     }
-
     return ready;
   };
 
-  const startReadyPolling = (run, { onReady, onTick } = {}) => {
+  const startReadyPolling = (run, { onReady } = {}) => {
     stopPolling();
     pollRef.current = setInterval(async () => {
       const ok = await ensureRunReady(run, { showHistoryMsg: true });
-      if (onTick) onTick();
       if (ok) {
         stopPolling();
         if (onReady) onReady();
@@ -131,153 +104,55 @@ export default function App() {
     }, POLL_INTERVAL_MS);
   };
 
-  /* ================= START RUN (dashboard) ================= */
-  const startRun = async () => {
-    if (!agency?.id) return;
-
-    setLoadingRun(true);
-    setRunMsg("Ricerca in corso…");
-
-    try {
-      await fetch(`${BACKEND_URL}/run-agency`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ agency_id: agency.id }),
-      });
-    } catch (e) {
-      console.error("startRun:", e);
-      setLoadingRun(false);
-      setRunMsg("Errore avvio ricerca.");
-      return;
-    }
-
-    // Aggiorna lista runs (dovrebbe comparire subito il nuovo run)
-    const updated = await loadRuns();
-    const latest = updated?.[0];
-
-    if (!latest) {
-      setRunMsg("Ricerca avviata…");
-      return;
-    }
-
-    // Mostra “elaborazione” finché non sono stati inseriti tutti i link
-    setRunMsg("Elaborazione annunci in corso…");
-
-    startReadyPolling(latest, {
-      onReady: async () => {
-        setLoadingRun(false);
-        setRunMsg("");
-        await loadRuns(); // refresh finale
-      },
-    });
-  };
-
-  /* ================= LOAD LISTINGS (history) ================= */
+  /* ================= LOAD LISTINGS ================= */
   const loadListingsForRun = async (run, resetPage = true) => {
     if (!run) return;
 
     setSelectedRun(run);
     setListings([]);
     setTotalCount(0);
-    setLoadingListings(false);
-
     if (resetPage) setPage(0);
 
-    // Se run non pronto: mostra messaggio e polla finché pronto
     const ready = await ensureRunReady(run, { showHistoryMsg: true });
     if (!ready) {
-      setListings([]);
-      setTotalCount(0);
-      setLoadingListings(false);
-
       startReadyPolling(run, {
-        onReady: async () => {
-          // quando pronto carica davvero la pagina 0
-          await loadListingsForRun(run, true);
-        },
+        onReady: async () => loadListingsForRun(run, true),
       });
       return;
     }
 
-    // pronto: stop polling history msg
-    setRunNotReady(false);
-    setRunReadyMsg("");
-
     setLoadingListings(true);
 
-    // 1) ids del run
-    const { data: links, error: linksErr } = await supabase
+    const { data: links } = await supabase
       .from("agency_run_listings")
       .select("listing_id")
       .eq("run_id", run.id);
 
-    if (linksErr) {
-      console.error("linksErr:", linksErr.message);
-      setLoadingListings(false);
-      return;
-    }
-
-    if (!links || links.length === 0) {
+    if (!links?.length) {
       setListings([]);
-      setTotalCount(0);
       setLoadingListings(false);
       return;
     }
 
     const listingIds = links.map((l) => l.listing_id);
 
-    // 2) total count (con filtri prezzo)
-    let countQuery = supabase
-      .from("listings")
-      .select("id", { count: "exact", head: true })
-      .in("id", listingIds);
-
-    if (priceMin) countQuery = countQuery.gte("price", Number(priceMin));
-    if (priceMax) countQuery = countQuery.lte("price", Number(priceMax));
-
-    const { count } = await countQuery;
-    setTotalCount(count || 0);
-
-    // 3) page data
     let dataQuery = supabase
       .from("listings")
-      .select("id, title, city, province, price, url")
+      .select("id, title, city, province, price, url, raw")
       .in("id", listingIds)
       .order("price", { ascending: true });
 
     if (priceMin) dataQuery = dataQuery.gte("price", Number(priceMin));
     if (priceMax) dataQuery = dataQuery.lte("price", Number(priceMax));
 
-    const effectivePage = resetPage ? 0 : page;
-    const from = effectivePage * PAGE_SIZE;
+    const from = (resetPage ? 0 : page) * PAGE_SIZE;
     const to = from + PAGE_SIZE - 1;
 
-    const { data, error } = await dataQuery.range(from, to);
-
-    if (error) {
-      console.error("dataQuery:", error.message);
-      setLoadingListings(false);
-      return;
-    }
-
+    const { data } = await dataQuery.range(from, to);
     setListings(data || []);
     setLoadingListings(false);
   };
 
-  /* ================= VIEW SWITCH ================= */
-  useEffect(() => {
-    if (!agency?.id) return;
-    // quando cambi tab, refresha sempre i run
-    loadRuns();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, agency?.id]);
-
-  const signOut = async () => {
-    stopPolling();
-    await supabase.auth.signOut();
-  };
-
-  /* ================= LOGIN ================= */
   if (!session) {
     return (
       <div className="card">
@@ -298,45 +173,13 @@ export default function App() {
     );
   }
 
-  const latestRun = runs[0] || null;
-  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
-
   return (
     <div>
-      {/* HEADER */}
       <div className="card">
         <h2>Dashboard</h2>
-        <p className="muted">{session.user.email}</p>
-
-        <div style={{ display: "flex", gap: 12 }}>
-          <button onClick={() => setView("dashboard")}>Dashboard</button>
-          <button onClick={() => setView("history")}>Le mie ricerche</button>
-        </div>
+        <button onClick={() => setView("history")}>Le mie ricerche</button>
       </div>
 
-      {/* DASHBOARD */}
-      {view === "dashboard" && (
-        <div className="card">
-          <h3>Avvia ricerca</h3>
-
-          <button onClick={startRun} disabled={loadingRun || !agency?.id}>
-            Avvia ricerca
-          </button>
-
-          {(loadingRun || runMsg) && <p className="muted">{runMsg}</p>}
-
-          {latestRun ? (
-            <p className="muted">
-              Ultima ricerca: {new Date(latestRun.created_at).toLocaleString()} –{" "}
-              {latestRun.new_listings_count} nuovi annunci
-            </p>
-          ) : (
-            <p className="muted">Nessuna ricerca ancora.</p>
-          )}
-        </div>
-      )}
-
-      {/* HISTORY */}
       {view === "history" && (
         <div className="card">
           <h3>Le mie ricerche</h3>
@@ -356,75 +199,28 @@ export default function App() {
             ))}
           </select>
 
-          {selectedRun && (
-            <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
-              <input
-                placeholder="Prezzo min"
-                value={priceMin}
-                onChange={(e) => setPriceMin(e.target.value)}
-              />
-              <input
-                placeholder="Prezzo max"
-                value={priceMax}
-                onChange={(e) => setPriceMax(e.target.value)}
-              />
-              <button onClick={() => loadListingsForRun(selectedRun, true)}>
-                Applica
-              </button>
-            </div>
-          )}
-
-          {runNotReady && <p className="muted">{runReadyMsg}</p>}
-          {loadingListings && <p className="muted">Caricamento annunci…</p>}
-
-          {!runNotReady && !loadingListings && selectedRun && listings.length === 0 && (
-            <p className="muted">Nessun annuncio per questa ricerca.</p>
-          )}
-
           <ul className="results">
-            {listings.map((l) => (
-              <li key={l.id}>
-                <a href={l.url} target="_blank" rel="noreferrer">
-                  {l.title}
-                </a>{" "}
-                – {l.city} ({l.province}) – €{l.price}
-              </li>
-            ))}
+            {listings.map((l) => {
+              const raw = JSON.parse(l.raw);
+              const img = raw.media?.images?.[0]?.sd;
+              return (
+                <li key={l.id} className="result-row">
+                  {img && <img src={img} className="thumb" />}
+                  <div>
+                    <a href={l.url} target="_blank">{l.title}</a>
+                    <div className="meta">
+                      {raw.contract?.name} • {raw.analytics?.advertiser} • {raw.analytics?.agencyName}
+                    </div>
+                    <div className="desc">
+                      {raw.analytics?.propertyStatus}
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
           </ul>
-
-          {!runNotReady && listings.length > 0 && (
-            <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-              <button
-                disabled={page === 0}
-                onClick={() => {
-                  setPage(page - 1);
-                  loadListingsForRun(selectedRun, false);
-                }}
-              >
-                ← Prev
-              </button>
-
-              <span className="muted">
-                Pagina {page + 1} / {totalPages}
-              </span>
-
-              <button
-                disabled={page + 1 >= totalPages}
-                onClick={() => {
-                  setPage(page + 1);
-                  loadListingsForRun(selectedRun, false);
-                }}
-              >
-                Next →
-              </button>
-            </div>
-          )}
         </div>
       )}
-
-      <div className="actions">
-        <button onClick={signOut}>Logout</button>
-      </div>
     </div>
   );
 }

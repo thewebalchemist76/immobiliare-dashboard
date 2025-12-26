@@ -39,13 +39,6 @@ body {
   margin-bottom: 64px;
 }
 
-/* ===== SECTIONS ===== */
-.section {
-  margin-top: 48px;
-  padding-top: 32px;
-  border-top: 1px solid var(--border);
-}
-
 /* ===== HEADERS ===== */
 h2 {
   margin: 0 0 16px;
@@ -63,26 +56,18 @@ h3 {
 
 .muted {
   color: var(--muted);
-  font-size: 15px;
+  font-size: 14px;
 }
 
 /* ===== FORM ===== */
-.search-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 24px;
-  margin-bottom: 32px;
-}
-
 input,
 select {
   width: 100%;
-  padding: 16px 18px;
+  padding: 14px 16px;
   border-radius: 14px;
   border: 1px solid var(--border);
   background: #f9fafb;
-  font-size: 15px;
-  transition: all 0.15s ease;
+  font-size: 14px;
 }
 
 input:focus,
@@ -102,38 +87,63 @@ button {
   border-radius: 14px;
   font-weight: 600;
   cursor: pointer;
-  font-size: 15px;
+  font-size: 14px;
   box-shadow: 0 6px 14px rgba(102,126,234,0.25);
-  transition: opacity 0.15s ease, transform 0.15s ease;
 }
 
 button:hover {
   opacity: 0.92;
-  transform: translateY(-1px);
 }
 
 button:disabled {
   opacity: 0.6;
   cursor: not-allowed;
-  transform: none;
 }
 
-/* ===== RESULTS ===== */
+/* ===== RESULTS LIST ===== */
 .results {
   margin-top: 24px;
+  padding: 0;
 }
 
 .results li {
   list-style: none;
-  padding: 24px 0;
-  border-bottom: 1px solid var(--border);
-  font-size: 15px;
 }
 
-.results a {
+/* ===== RESULT ROW (ANNUNCIO) ===== */
+.result-row {
+  display: flex;
+  gap: 16px;
+  padding: 24px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.result-row a {
   text-decoration: none;
   color: var(--accent);
   font-weight: 600;
+  font-size: 15px;
+}
+
+.thumb {
+  width: 96px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.meta {
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.desc {
+  font-size: 14px;
+  margin-top: 6px;
+  color: #374151;
+  line-height: 1.4;
 }
 
 /* ===== FOOTER ACTIONS ===== */
