@@ -1,9 +1,9 @@
+// App.jsx
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "./supabase";
 import "./App.css";
 
 const PAGE_SIZE = 20;
-const POLL_INTERVAL_MS = 5000;
 
 const fmtDate = (d) => {
   if (!d) return "";
@@ -18,14 +18,12 @@ export default function App() {
 
   const [session, setSession] = useState(null);
   const [agency, setAgency] = useState(null);
-
   const [view, setView] = useState("dashboard");
+
   const [runs, setRuns] = useState([]);
   const [selectedRun, setSelectedRun] = useState(null);
 
   const [listings, setListings] = useState([]);
-  const [loadingListings, setLoadingListings] = useState(false);
-
   const [priceMin, setPriceMin] = useState("");
   const [priceMax, setPriceMax] = useState("");
 
@@ -34,8 +32,6 @@ export default function App() {
 
   const [loadingRun, setLoadingRun] = useState(false);
   const [runMsg, setRunMsg] = useState("");
-
-  const pollRef = useRef(null);
 
   /* ================= AUTH ================= */
   useEffect(() => {
@@ -59,27 +55,18 @@ export default function App() {
 
   /* ================= RUNS ================= */
   const loadRuns = async () => {
-    if (!agency?.id) return [];
+    if (!agency?.id) return;
     const { data } = await supabase
       .from("agency_runs")
       .select("id, created_at, new_listings_count, total_listings")
       .eq("agency_id", agency.id)
       .order("created_at", { ascending: false });
     setRuns(data || []);
-    return data || [];
   };
 
   useEffect(() => {
     if (agency?.id) loadRuns();
   }, [agency?.id]);
-
-  const getRunLinksCount = async (runId) => {
-    const { count } = await supabase
-      .from("agency_run_listings")
-      .select("run_id", { count: "exact", head: true })
-      .eq("run_id", runId);
-    return count || 0;
-  };
 
   /* ================= START RUN ================= */
   const startRun = async () => {
@@ -94,19 +81,9 @@ export default function App() {
       body: JSON.stringify({ agency_id: agency.id }),
     });
 
-    const updated = await loadRuns();
-    const latest = updated?.[0];
-    if (!latest) return;
-
-    const interval = setInterval(async () => {
-      const ok = (await getRunLinksCount(latest.id)) >= latest.total_listings;
-      if (ok) {
-        clearInterval(interval);
-        setLoadingRun(false);
-        setRunMsg("");
-        loadRuns();
-      }
-    }, POLL_INTERVAL_MS);
+    setLoadingRun(false);
+    setRunMsg("");
+    loadRuns();
   };
 
   /* ================= LOAD LISTINGS ================= */
@@ -115,7 +92,6 @@ export default function App() {
 
     setSelectedRun(run);
     if (resetPage) setPage(0);
-    setLoadingListings(true);
 
     const { data: links } = await supabase
       .from("agency_run_listings")
@@ -124,7 +100,6 @@ export default function App() {
 
     if (!links?.length) {
       setListings([]);
-      setLoadingListings(false);
       return;
     }
 
@@ -143,20 +118,19 @@ export default function App() {
 
     let dataQuery = supabase
       .from("listings")
-      .select("id, title, city, province, price, url, raw, first_seen_at")
+      .select("id, price, url, raw, first_seen_at")
       .in("id", ids)
       .order("price", { ascending: true });
 
     if (priceMin) dataQuery = dataQuery.gte("price", Number(priceMin));
     if (priceMax) dataQuery = dataQuery.lte("price", Number(priceMax));
 
-    const effectivePage = pageOverride ?? (resetPage ? 0 : page);
-    const from = effectivePage * PAGE_SIZE;
+    const p = pageOverride ?? (resetPage ? 0 : page);
+    const from = p * PAGE_SIZE;
     const to = from + PAGE_SIZE - 1;
 
     const { data } = await dataQuery.range(from, to);
     setListings(data || []);
-    setLoadingListings(false);
   };
 
   const resetFilters = () => {
@@ -165,25 +139,7 @@ export default function App() {
     if (selectedRun) loadListingsForRun(selectedRun, true, 0);
   };
 
-  if (!session) {
-    return (
-      <div className="card">
-        <h2>Login</h2>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            supabase.auth.signInWithOtp({
-              email: e.target.email.value,
-              options: { emailRedirectTo: window.location.origin },
-            });
-          }}
-        >
-          <input name="email" placeholder="email" />
-          <button>Invia magic link</button>
-        </form>
-      </div>
-    );
-  }
+  if (!session) return null;
 
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
@@ -191,29 +147,21 @@ export default function App() {
     <div>
       {/* HEADER */}
       <div className="card">
-        <div style={{ display: "flex", alignItems: "baseline", gap: 16 }}>
-          <h2 style={{ margin: 0 }}>Dashboard</h2>
-          <span className="muted">{session.user.email}</span>
-        </div>
-
-        <div style={{ display: "flex", gap: 12, marginTop: 24 }}>
+        <h2>Dashboard <span className="muted">{session.user.email}</span></h2>
+        <div style={{ display: "flex", gap: 12 }}>
           <button onClick={() => setView("dashboard")}>Dashboard</button>
           <button onClick={() => setView("history")}>Le mie ricerche</button>
         </div>
       </div>
 
-      {/* DASHBOARD */}
       {view === "dashboard" && (
         <div className="card">
           <h3>Avvia ricerca</h3>
-          <button onClick={startRun} disabled={loadingRun}>
-            Avvia ricerca
-          </button>
+          <button onClick={startRun} disabled={loadingRun}>Avvia ricerca</button>
           {runMsg && <p className="muted">{runMsg}</p>}
         </div>
       )}
 
-      {/* HISTORY */}
       {view === "history" && (
         <div className="card">
           <h3>Le mie ricerche</h3>
@@ -221,39 +169,24 @@ export default function App() {
           <select
             value={selectedRun?.id || ""}
             onChange={(e) => {
-              const run = runs.find((r) => String(r.id) === e.target.value);
+              const run = runs.find(r => r.id === e.target.value);
               if (run) loadListingsForRun(run, true, 0);
             }}
           >
-            <option value="">Seleziona una ricerca…</option>
-            {runs.map((r) => (
+            <option value="">Seleziona…</option>
+            {runs.map(r => (
               <option key={r.id} value={r.id}>
-                {new Date(r.created_at).toLocaleString()} – {r.new_listings_count} nuovi annunci
+                {new Date(r.created_at).toLocaleString()}
               </option>
             ))}
           </select>
 
           {selectedRun && (
             <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
-              <input
-                placeholder="Prezzo min"
-                value={priceMin}
-                onChange={(e) => setPriceMin(e.target.value)}
-              />
-              <input
-                placeholder="Prezzo max"
-                value={priceMax}
-                onChange={(e) => setPriceMax(e.target.value)}
-              />
-              <button onClick={() => loadListingsForRun(selectedRun, true, 0)}>
-                Applica
-              </button>
-              <button
-                onClick={resetFilters}
-                style={{ background: "#e5e7eb", color: "#111" }}
-              >
-                Reset
-              </button>
+              <input placeholder="Prezzo min" value={priceMin} onChange={e => setPriceMin(e.target.value)} />
+              <input placeholder="Prezzo max" value={priceMax} onChange={e => setPriceMax(e.target.value)} />
+              <button onClick={() => loadListingsForRun(selectedRun, true, 0)}>Applica</button>
+              <button onClick={resetFilters} style={{ background: "#e5e7eb", color: "#111" }}>Reset</button>
             </div>
           )}
 
@@ -261,60 +194,52 @@ export default function App() {
             <table className="crm-table">
               <thead>
                 <tr>
-                  <th>Data acquisizione</th>
-                  <th>Ultimo aggiornamento</th>
+                  <th className="sticky c1">Data acquisizione</th>
+                  <th className="sticky c2">Ultimo aggiornamento</th>
+                  <th className="sticky c3">Titolo</th>
+                  <th className="sticky c4">Link</th>
+                  <th className="sticky c5">Prezzo</th>
+                  <th className="sticky c6">Contratto</th>
+
                   <th>Data pubblicazione</th>
                   <th>Portale</th>
                   <th>Telefono</th>
                   <th>Foto</th>
-                  <th>Link</th>
                   <th>Agenzia / Privato</th>
-                  <th>Prezzo 1° uscita</th>
-                  <th>Ultimo prezzo</th>
                   <th>Via</th>
                   <th>Zona</th>
-                  <th>Civ</th>
                   <th>Vani</th>
                   <th>WC</th>
-                  <th>P.</th>
-                  <th>Terrazzo/Balcone</th>
-                  <th>Box/Posto auto</th>
+                  <th>Piano</th>
+                  <th>Balcone</th>
                   <th>Stato immobile</th>
-                  <th>Data contatto</th>
-                  <th>Nome proprietario</th>
                   <th>Descrizione</th>
                 </tr>
               </thead>
               <tbody>
-                {listings.map((l) => {
+                {listings.map(l => {
                   const r = l.raw || {};
-                  const img = r?.media?.images?.[0]?.sd;
-
                   return (
                     <tr key={l.id}>
-                      <td>{fmtDate(l.first_seen_at)}</td>
-                      <td>{fmtDate(r.lastModified * 1000)}</td>
+                      <td className="sticky c1">{fmtDate(l.first_seen_at)}</td>
+                      <td className="sticky c2">{fmtDate(r.lastModified * 1000)}</td>
+                      <td className="sticky c3">{r.title}</td>
+                      <td className="sticky c4"><a href={l.url} target="_blank">link</a></td>
+                      <td className="sticky c5">€ {l.price}</td>
+                      <td className="sticky c6">{r.contract?.name}</td>
+
                       <td>{fmtDate(r.creationDate * 1000)}</td>
                       <td>{l.url?.includes("immobiliare") ? "immobiliare.it" : ""}</td>
                       <td></td>
-                      <td>{img && <img src={img} className="mini-thumb" />}</td>
-                      <td>
-                        <a href={l.url} target="_blank" rel="noreferrer">link</a>
-                      </td>
-                      <td>{r.analytics?.agencyName || r.analytics?.advertiser || ""}</td>
-                      <td>{r.price?.startPrice || ""}</td>
-                      <td>{l.price ? `€ ${l.price}` : ""}</td>
-                      <td>{r.geography?.street || ""}</td>
-                      <td>{r.analytics?.macrozone || ""}</td>
-                      <td></td>
-                      <td>{r.topology?.rooms || ""}</td>
-                      <td>{r.topology?.bathrooms || ""}</td>
-                      <td>{r.topology?.floor || ""}</td>
+                      <td>{r.media?.images?.[0]?.sd && <img src={r.media.images[0].sd} className="mini-thumb" />}</td>
+                      <td>{r.analytics?.agencyName || r.analytics?.advertiser}</td>
+                      <td>{r.geography?.street}</td>
+                      <td>{r.analytics?.macrozone}</td>
+                      <td>{r.topology?.rooms}</td>
+                      <td>{r.topology?.bathrooms}</td>
+                      <td>{r.topology?.floor}</td>
                       <td>{r.topology?.balcony ? "Sì" : ""}</td>
-                      <td></td>
-                      <td>{r.analytics?.propertyStatus || ""}</td>
-                      <td></td>
-                      <td></td>
+                      <td>{r.analytics?.propertyStatus}</td>
                       <td></td>
                     </tr>
                   );
@@ -323,30 +248,14 @@ export default function App() {
             </table>
           </div>
 
-          <div style={{ display: "flex", gap: 12, alignItems: "center", marginTop: 16 }}>
-            <button
-              disabled={page === 0}
-              onClick={() => {
-                const p = page - 1;
-                setPage(p);
-                loadListingsForRun(selectedRun, false, p);
-              }}
-            >
-              ← Prev
-            </button>
-            <span className="muted">
-              Pagina {page + 1} / {totalPages}
-            </span>
-            <button
-              disabled={page + 1 >= totalPages}
-              onClick={() => {
-                const p = page + 1;
-                setPage(p);
-                loadListingsForRun(selectedRun, false, p);
-              }}
-            >
-              Next →
-            </button>
+          <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
+            <button disabled={page === 0} onClick={() => {
+              const p = page - 1; setPage(p); loadListingsForRun(selectedRun, false, p);
+            }}>← Prev</button>
+            <span className="muted">Pagina {page + 1} / {totalPages}</span>
+            <button disabled={page + 1 >= totalPages} onClick={() => {
+              const p = page + 1; setPage(p); loadListingsForRun(selectedRun, false, p);
+            }}>Next →</button>
           </div>
         </div>
       )}
