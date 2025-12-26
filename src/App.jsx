@@ -261,17 +261,18 @@ export default function App() {
             <table className="crm-table">
               <thead>
                 <tr>
-                  <th>Data</th>
-                  <th>Data agg.</th>
+                  <th>Data acquisizione</th>
+                  <th>Ultimo aggiornamento</th>
+                  <th>Data pubblicazione</th>
                   <th>Portale</th>
                   <th>Telefono</th>
-                  <th>Data agg. annuncio</th>
                   <th>Foto</th>
                   <th>Link</th>
                   <th>Agenzia / Privato</th>
                   <th>Prezzo 1° uscita</th>
                   <th>Ultimo prezzo</th>
                   <th>Via</th>
+                  <th>Zona</th>
                   <th>Civ</th>
                   <th>Vani</th>
                   <th>WC</th>
@@ -282,7 +283,6 @@ export default function App() {
                   <th>Data contatto</th>
                   <th>Nome proprietario</th>
                   <th>Descrizione</th>
-                  <th>Zona</th>
                 </tr>
               </thead>
               <tbody>
@@ -294,9 +294,9 @@ export default function App() {
                     <tr key={l.id}>
                       <td>{fmtDate(l.first_seen_at)}</td>
                       <td>{fmtDate(r.lastModified * 1000)}</td>
+                      <td>{fmtDate(r.creationDate * 1000)}</td>
                       <td>{l.url?.includes("immobiliare") ? "immobiliare.it" : ""}</td>
                       <td></td>
-                      <td>{fmtDate(r.creationDate * 1000)}</td>
                       <td>{img && <img src={img} className="mini-thumb" />}</td>
                       <td>
                         <a href={l.url} target="_blank" rel="noreferrer">link</a>
@@ -305,6 +305,7 @@ export default function App() {
                       <td>{r.price?.startPrice || ""}</td>
                       <td>{l.price ? `€ ${l.price}` : ""}</td>
                       <td>{r.geography?.street || ""}</td>
+                      <td>{r.analytics?.macrozone || ""}</td>
                       <td></td>
                       <td>{r.topology?.rooms || ""}</td>
                       <td>{r.topology?.bathrooms || ""}</td>
@@ -315,7 +316,6 @@ export default function App() {
                       <td></td>
                       <td></td>
                       <td></td>
-                      <td>{r.analytics?.macrozone || ""}</td>
                     </tr>
                   );
                 })}
