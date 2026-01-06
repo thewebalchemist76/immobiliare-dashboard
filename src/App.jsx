@@ -1,5 +1,5 @@
 // App.jsx
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { supabase } from "./supabase";
 import "./App.css";
 
@@ -35,18 +35,34 @@ export default function App() {
   const [loadingRun, setLoadingRun] = useState(false);
   const [runMsg, setRunMsg] = useState("");
 
+  // Notes map: { [listing_id]: note }
+  const [notesByListing, setNotesByListing] = useState({});
+
   // Drawer dettagli
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [detailsListing, setDetailsListing] = useState(null);
 
+  // Drawer note state + debounce save
+  const [noteDraft, setNoteDraft] = useState("");
+  const saveTimerRef = useRef(null);
+  const lastSavedRef = useRef("");
+
   const openDetails = (l) => {
     setDetailsListing(l);
     setDetailsOpen(true);
+
+    const current = notesByListing?.[l.id] ?? "";
+    setNoteDraft(current);
+    lastSavedRef.current = current;
   };
 
   const closeDetails = () => {
     setDetailsOpen(false);
     setDetailsListing(null);
+    setNoteDraft("");
+    lastSavedRef.current = "";
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = null;
   };
 
   /* ================= AUTH ================= */
@@ -102,6 +118,56 @@ export default function App() {
     loadRuns();
   };
 
+  /* ================= NOTES LOAD ================= */
+  const loadNotesForListingIds = async (listingIds) => {
+    if (!session?.user?.id) return;
+    if (!listingIds?.length) {
+      setNotesByListing({});
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("listing_notes")
+      .select("listing_id, note")
+      .eq("user_id", session.user.id)
+      .in("listing_id", listingIds);
+
+    if (error) {
+      console.error("loadNotesForListingIds:", error.message);
+      setNotesByListing({});
+      return;
+    }
+
+    const map = {};
+    (data || []).forEach((r) => {
+      map[r.listing_id] = r.note || "";
+    });
+
+    setNotesByListing(map);
+  };
+
+  const upsertNote = async (listingId, note) => {
+    if (!session?.user?.id || !listingId) return;
+
+    const payload = {
+      listing_id: listingId,
+      user_id: session.user.id,
+      note: note ?? "",
+      updated_at: new Date().toISOString(),
+    };
+
+    const { error } = await supabase.from("listing_notes").upsert(payload, {
+      onConflict: "listing_id,user_id",
+    });
+
+    if (error) {
+      console.error("upsertNote:", error.message);
+      return;
+    }
+
+    setNotesByListing((prev) => ({ ...prev, [listingId]: note ?? "" }));
+  };
+
   /* ================= LOAD LISTINGS ================= */
   const loadListingsForRun = async (run, resetPage = true, pageOverride = null) => {
     if (!run) return;
@@ -117,6 +183,7 @@ export default function App() {
     if (linksErr || !links?.length) {
       setListings([]);
       setTotalCount(0);
+      setNotesByListing({});
       return;
     }
 
@@ -147,7 +214,20 @@ export default function App() {
     const to = from + PAGE_SIZE - 1;
 
     const { data } = await dataQuery.range(from, to);
-    setListings(data || []);
+    const rows = data || [];
+    setListings(rows);
+
+    // carica note SOLO per i listing della pagina corrente
+    await loadNotesForListingIds(rows.map((x) => x.id));
+
+    // se drawer aperto e listing è nella nuova pagina, riallinea draft
+    if (detailsOpen && detailsListing?.id) {
+      const still = rows.find((x) => x.id === detailsListing.id);
+      if (!still) {
+        // se cambi pagina, chiudiamo il drawer per evitare salvataggi ambigui
+        closeDetails();
+      }
+    }
   };
 
   const resetFilters = () => {
@@ -155,6 +235,26 @@ export default function App() {
     setPriceMax("");
     if (selectedRun) loadListingsForRun(selectedRun, true, 0);
   };
+
+  // autosave debounce note (solo se drawer aperto)
+  useEffect(() => {
+    if (!detailsOpen || !detailsListing?.id) return;
+
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+
+    saveTimerRef.current = setTimeout(async () => {
+      const current = noteDraft ?? "";
+      if (current === lastSavedRef.current) return;
+
+      await upsertNote(detailsListing.id, current);
+      lastSavedRef.current = current;
+    }, 700);
+
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [noteDraft, detailsOpen, detailsListing?.id]);
 
   if (!session) return null;
 
@@ -237,7 +337,7 @@ export default function App() {
             </div>
           )}
 
-          {/* TABELLA COMPATTA */}
+          {/* TABELLA */}
           <div className="table-wrap">
             <table className="crm-table">
               <thead>
@@ -250,6 +350,7 @@ export default function App() {
                   <th>Agenzia / Privato</th>
                   <th>Via</th>
                   <th>Zona</th>
+                  <th>Note</th>
                   <th style={{ textAlign: "right" }}>Azioni</th>
                 </tr>
               </thead>
@@ -259,6 +360,7 @@ export default function App() {
                   const rowPortal = l?.url?.includes("immobiliare") ? "immobiliare.it" : "";
                   const rowAdvertiser =
                     r?.analytics?.agencyName || r?.analytics?.advertiser || "";
+                  const noteSnippet = (notesByListing?.[l.id] || "").trim();
                   return (
                     <tr key={l.id}>
                       <td>{fmtDate(l.first_seen_at)}</td>
@@ -282,6 +384,9 @@ export default function App() {
                       <td>{rowAdvertiser}</td>
                       <td>{r?.geography?.street || ""}</td>
                       <td>{r?.analytics?.macrozone || ""}</td>
+                      <td className="note-cell">
+                        {noteSnippet ? noteSnippet : <span className="muted">—</span>}
+                      </td>
                       <td style={{ textAlign: "right" }}>
                         <button onClick={() => openDetails(l)}>Vedi dettagli</button>
                       </td>
@@ -377,6 +482,20 @@ export default function App() {
               </div>
 
               <div className="kv">
+                <div className="kv-label">Note (solo questo è modificabile)</div>
+                <textarea
+                  className="note-textarea"
+                  rows={6}
+                  placeholder="Scrivi note…"
+                  value={noteDraft}
+                  onChange={(e) => setNoteDraft(e.target.value)}
+                />
+                <div className="muted" style={{ marginTop: 6 }}>
+                  Salvataggio automatico.
+                </div>
+              </div>
+
+              <div className="kv">
                 <div className="kv-label">Vani</div>
                 <div className="kv-value">{safe(dr?.topology?.rooms, "—")}</div>
               </div>
@@ -399,6 +518,16 @@ export default function App() {
               <div className="kv">
                 <div className="kv-label">Stato immobile</div>
                 <div className="kv-value">{dr?.analytics?.propertyStatus || "—"}</div>
+              </div>
+
+              <div className="kv">
+                <div className="kv-label">Portale</div>
+                <div className="kv-value">{portal || "—"}</div>
+              </div>
+
+              <div className="kv">
+                <div className="kv-label">Data pubblicazione</div>
+                <div className="kv-value">{fmtDate(dr?.creationDate * 1000)}</div>
               </div>
             </div>
           </div>
