@@ -82,7 +82,6 @@ export default function App() {
 
   useEffect(() => {
     if (agency?.id) loadRuns();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agency?.id]);
 
   /* ================= START RUN ================= */
@@ -115,14 +114,7 @@ export default function App() {
       .select("listing_id")
       .eq("run_id", run.id);
 
-    if (linksErr) {
-      console.error("linksErr:", linksErr.message);
-      setListings([]);
-      setTotalCount(0);
-      return;
-    }
-
-    if (!links?.length) {
+    if (linksErr || !links?.length) {
       setListings([]);
       setTotalCount(0);
       return;
@@ -154,13 +146,7 @@ export default function App() {
     const from = p * PAGE_SIZE;
     const to = from + PAGE_SIZE - 1;
 
-    const { data, error } = await dataQuery.range(from, to);
-    if (error) {
-      console.error("dataQuery:", error.message);
-      setListings([]);
-      return;
-    }
-
+    const { data } = await dataQuery.range(from, to);
     setListings(data || []);
   };
 
@@ -176,23 +162,11 @@ export default function App() {
 
   const dl = detailsListing;
   const dr = dl?.raw || {};
-  const drawerTitle =
-    dr?.title ||
-    (dl ? `Annuncio #${dl.id}` : "");
-
-  const advertiserName =
-    dr?.analytics?.agencyName ||
-    dr?.analytics?.advertiser ||
-    "";
-
-  const street = dr?.geography?.street || "";
-  const zone = dr?.analytics?.macrozone || "";
-
   const portal = dl?.url?.includes("immobiliare") ? "immobiliare.it" : "";
-
-  const contractName = dr?.contract?.name || "";
-
-  const firstImg = dr?.media?.images?.[0]?.hd || dr?.media?.images?.[0]?.sd || "";
+  const advertiser =
+    dr?.analytics?.agencyName || dr?.analytics?.advertiser || "";
+  const firstImg =
+    dr?.media?.images?.[0]?.hd || dr?.media?.images?.[0]?.sd || "";
 
   return (
     <div>
@@ -239,7 +213,7 @@ export default function App() {
           </select>
 
           {selectedRun && (
-            <div style={{ marginTop: 12, display: "flex", gap: 8, alignItems: "center" }}>
+            <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
               <input
                 placeholder="Prezzo min"
                 value={priceMin}
@@ -262,9 +236,9 @@ export default function App() {
             </div>
           )}
 
-          {/* TABELLA: SOLO CAMPI FISSI + AZIONE */}
+          {/* TABELLA COMPATTA */}
           <div className="table-wrap">
-            <table className="crm-table" style={{ minWidth: 0, width: "100%" }}>
+            <table className="crm-table">
               <thead>
                 <tr>
                   <th>Data acquisizione</th>
@@ -281,32 +255,33 @@ export default function App() {
               <tbody>
                 {listings.map((l) => {
                   const r = l.raw || {};
-                  const advertiser =
-                    r.analytics?.agencyName || r.analytics?.advertiser || "";
-                  const via = r.geography?.street || "";
-                  const zona = r.analytics?.macrozone || "";
                   return (
                     <tr key={l.id}>
                       <td>{fmtDate(l.first_seen_at)}</td>
                       <td>{fmtDate(r.lastModified * 1000)}</td>
-                      <td style={{ whiteSpace: "normal" }}>
-                        <div style={{ fontWeight: 600 }}>{safe(r.title, "")}</div>
+                      <td>
+                        <div style={{ fontWeight: 600 }}>{safe(r.title)}</div>
                         <div className="muted" style={{ marginTop: 4 }}>
-                          {portal} {l.url ? "•" : ""}{" "}
-                          {l.url ? (
-                            <a href={l.url} target="_blank" rel="noreferrer">
-                              link
-                            </a>
-                          ) : null}
+                          {portal}{" "}
+                          {l.url && (
+                            <>
+                              •{" "}
+                              <a href={l.url} target="_blank" rel="noreferrer">
+                                link
+                              </a>
+                            </>
+                          )}
                         </div>
                       </td>
-                      <td>€ {safe(l.price, "")}</td>
-                      <td>{safe(r.contract?.name, "")}</td>
-                      <td style={{ whiteSpace: "normal" }}>{advertiser}</td>
-                      <td style={{ whiteSpace: "normal" }}>{via}</td>
-                      <td style={{ whiteSpace: "normal" }}>{zona}</td>
+                      <td>€ {safe(l.price)}</td>
+                      <td>{safe(r.contract?.name)}</td>
+                      <td>{advertiser}</td>
+                      <td>{r.geography?.street || ""}</td>
+                      <td>{r.analytics?.macrozone || ""}</td>
                       <td style={{ textAlign: "right" }}>
-                        <button onClick={() => openDetails(l)}>Vedi dettagli</button>
+                        <button onClick={() => openDetails(l)}>
+                          Vedi dettagli
+                        </button>
                       </td>
                     </tr>
                   );
@@ -317,7 +292,7 @@ export default function App() {
 
           {/* PAGINAZIONE */}
           {selectedRun && (
-            <div style={{ display: "flex", gap: 12, marginTop: 16, alignItems: "center" }}>
+            <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
               <button
                 disabled={page === 0}
                 onClick={() => {
@@ -328,11 +303,9 @@ export default function App() {
               >
                 ← Prev
               </button>
-
               <span className="muted">
                 Pagina {page + 1} / {totalPages}
               </span>
-
               <button
                 disabled={page + 1 >= totalPages}
                 onClick={() => {
@@ -352,133 +325,92 @@ export default function App() {
         <button onClick={signOut}>Logout</button>
       </div>
 
-      {/* DRAWER DETTAGLI (inline style, poi lo mettiamo in App.css) */}
+      {/* DRAWER DETTAGLI */}
       {detailsOpen && (
-        <div
-          onClick={closeDetails}
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.25)",
-            zIndex: 999,
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              position: "absolute",
-              top: 0,
-              right: 0,
-              height: "100%",
-              width: "520px",
-              maxWidth: "92vw",
-              background: "#fff",
-              boxShadow: "-20px 0 40px rgba(0,0,0,0.15)",
-              padding: 20,
-              overflowY: "auto",
-            }}
-          >
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+        <div className="drawer-overlay" onClick={closeDetails}>
+          <div className="drawer" onClick={(e) => e.stopPropagation()}>
+            <div className="drawer-header">
               <div>
-                <div style={{ fontSize: 18, fontWeight: 700 }}>{drawerTitle}</div>
-                <div className="muted" style={{ marginTop: 6 }}>
-                  {fmtDate(dl?.first_seen_at)} • {contractName} • € {safe(dl?.price, "")}
+                <div className="drawer-title">{safe(dr.title)}</div>
+                <div className="drawer-subtitle">
+                  {fmtDate(dl?.first_seen_at)} • {safe(dr.contract?.name)} • €{" "}
+                  {safe(dl?.price)}
                 </div>
               </div>
-              <button onClick={closeDetails} style={{ background: "#e5e7eb", color: "#111" }}>
+              <button
+                onClick={closeDetails}
+                style={{ background: "#e5e7eb", color: "#111" }}
+              >
                 Chiudi
               </button>
             </div>
 
             {firstImg && (
-              <img
-                src={firstImg}
-                alt=""
-                style={{
-                  width: "100%",
-                  height: 220,
-                  objectFit: "cover",
-                  borderRadius: 12,
-                  marginTop: 16,
-                }}
-              />
+              <img src={firstImg} alt="" className="drawer-img" />
             )}
 
-            <div style={{ marginTop: 16, display: "grid", gap: 10 }}>
-              <div>
-                <div className="muted">Link</div>
+            <div className="drawer-grid">
+              <div className="kv">
+                <div className="kv-label">Link</div>
                 {dl?.url ? (
                   <a href={dl.url} target="_blank" rel="noreferrer">
                     {dl.url}
                   </a>
                 ) : (
-                  <div className="muted">—</div>
+                  <div className="kv-value">—</div>
                 )}
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <div>
-                  <div className="muted">Data acquisizione</div>
-                  <div>{fmtDate(dl?.first_seen_at) || "—"}</div>
-                </div>
-                <div>
-                  <div className="muted">Ultimo aggiornamento</div>
-                  <div>{fmtDate(dr?.lastModified * 1000) || "—"}</div>
-                </div>
-                <div>
-                  <div className="muted">Data pubblicazione</div>
-                  <div>{fmtDate(dr?.creationDate * 1000) || "—"}</div>
-                </div>
-                <div>
-                  <div className="muted">Portale</div>
-                  <div>{portal || "—"}</div>
+              <div className="kv">
+                <div className="kv-label">Agenzia / Privato</div>
+                <div className="kv-value">{advertiser || "—"}</div>
+              </div>
+
+              <div className="kv">
+                <div className="kv-label">Via</div>
+                <div className="kv-value">{dr.geography?.street || "—"}</div>
+              </div>
+
+              <div className="kv">
+                <div className="kv-label">Zona</div>
+                <div className="kv-value">
+                  {dr.analytics?.macrozone || "—"}
                 </div>
               </div>
 
-              <div>
-                <div className="muted">Agenzia / Privato</div>
-                <div>{advertiserName || "—"}</div>
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <div>
-                  <div className="muted">Via</div>
-                  <div>{street || "—"}</div>
-                </div>
-                <div>
-                  <div className="muted">Zona</div>
-                  <div>{zone || "—"}</div>
+              <div className="kv">
+                <div className="kv-label">Vani</div>
+                <div className="kv-value">
+                  {safe(dr.topology?.rooms, "—")}
                 </div>
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-                <div>
-                  <div className="muted">Vani</div>
-                  <div>{safe(dr?.topology?.rooms, "—")}</div>
-                </div>
-                <div>
-                  <div className="muted">WC</div>
-                  <div>{safe(dr?.topology?.bathrooms, "—")}</div>
-                </div>
-                <div>
-                  <div className="muted">Piano</div>
-                  <div>{safe(dr?.topology?.floor, "—")}</div>
+              <div className="kv">
+                <div className="kv-label">WC</div>
+                <div className="kv-value">
+                  {safe(dr.topology?.bathrooms, "—")}
                 </div>
               </div>
 
-              <div>
-                <div className="muted">Balcone</div>
-                <div>{dr?.topology?.balcony ? "Sì" : "—"}</div>
+              <div className="kv">
+                <div className="kv-label">Piano</div>
+                <div className="kv-value">
+                  {safe(dr.topology?.floor, "—")}
+                </div>
               </div>
 
-              <div>
-                <div className="muted">Stato immobile</div>
-                <div>{safe(dr?.analytics?.propertyStatus, "—")}</div>
+              <div className="kv">
+                <div className="kv-label">Balcone</div>
+                <div className="kv-value">
+                  {dr.topology?.balcony ? "Sì" : "—"}
+                </div>
               </div>
 
-              <div>
-                <div className="muted">Descrizione</div>
-                <div className="muted">—</div>
+              <div className="kv">
+                <div className="kv-label">Stato immobile</div>
+                <div className="kv-value">
+                  {dr.analytics?.propertyStatus || "—"}
+                </div>
               </div>
             </div>
           </div>
