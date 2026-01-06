@@ -127,7 +127,7 @@ button:disabled {
 }
 
 /* ===================================================== */
-/* ===== CRM TABLE ESTESA (NO STICKY) ================== */
+/* ===== CRM TABLE (ORA COMPATTA) ======================= */
 /* ===================================================== */
 
 .table-wrap {
@@ -135,9 +135,9 @@ button:disabled {
   overflow-x: auto;
 }
 
+/* prima era min-width: 2400px (forzava scroll); ora è fluida */
 .crm-table {
   width: 100%;
-  min-width: 2400px;
   border-collapse: collapse;
   font-size: 13px;
 }
@@ -145,18 +145,24 @@ button:disabled {
 .crm-table th,
 .crm-table td {
   border-bottom: 1px solid var(--border);
-  padding: 8px 10px;
+  padding: 10px 10px;
   text-align: left;
   vertical-align: top;
-  white-space: nowrap;
   background: #fff;
 }
 
+/* header */
 .crm-table thead th {
-  font-weight: 600;
+  font-weight: 700;
   color: #374151;
 }
 
+/* per default non forziamo nowrap: così “Via/Zona/Agenzia” vanno a capo */
+.crm-table td {
+  white-space: normal;
+}
+
+/* link */
 .crm-table a {
   color: var(--accent);
   font-weight: 600;
@@ -168,4 +174,75 @@ button:disabled {
   height: 36px;
   object-fit: cover;
   border-radius: 4px;
+}
+
+/* ===================================================== */
+/* ===== DETAILS DRAWER (per togliere inline style) ===== */
+/* ===================================================== */
+
+.drawer-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.25);
+  z-index: 999;
+}
+
+.drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  height: 100%;
+  width: 520px;
+  max-width: 92vw;
+  background: #fff;
+  box-shadow: -20px 0 40px rgba(0, 0, 0, 0.15);
+  padding: 20px;
+  overflow-y: auto;
+}
+
+.drawer-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.drawer-title {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.drawer-subtitle {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.drawer-img {
+  width: 100%;
+  height: 220px;
+  object-fit: cover;
+  border-radius: 12px;
+  margin-top: 16px;
+}
+
+.drawer-grid {
+  margin-top: 16px;
+  display: grid;
+  gap: 10px;
+}
+
+.kv {
+  display: grid;
+  gap: 4px;
+}
+
+.kv-label {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.kv-value {
+  font-size: 14px;
+  color: var(--text);
 }
