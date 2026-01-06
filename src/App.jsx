@@ -160,10 +160,11 @@ export default function App() {
 
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
+  // Drawer derivati
   const dl = detailsListing;
   const dr = dl?.raw || {};
   const portal = dl?.url?.includes("immobiliare") ? "immobiliare.it" : "";
-  const advertiser =
+  const drawerAdvertiser =
     dr?.analytics?.agencyName || dr?.analytics?.advertiser || "";
   const firstImg =
     dr?.media?.images?.[0]?.hd || dr?.media?.images?.[0]?.sd || "";
@@ -255,6 +256,9 @@ export default function App() {
               <tbody>
                 {listings.map((l) => {
                   const r = l.raw || {};
+                  const rowPortal = l?.url?.includes("immobiliare") ? "immobiliare.it" : "";
+                  const rowAdvertiser =
+                    r?.analytics?.agencyName || r?.analytics?.advertiser || "";
                   return (
                     <tr key={l.id}>
                       <td>{fmtDate(l.first_seen_at)}</td>
@@ -262,7 +266,7 @@ export default function App() {
                       <td>
                         <div style={{ fontWeight: 600 }}>{safe(r.title)}</div>
                         <div className="muted" style={{ marginTop: 4 }}>
-                          {portal}{" "}
+                          {rowPortal}{" "}
                           {l.url && (
                             <>
                               •{" "}
@@ -275,13 +279,11 @@ export default function App() {
                       </td>
                       <td>€ {safe(l.price)}</td>
                       <td>{safe(r.contract?.name)}</td>
-                      <td>{advertiser}</td>
-                      <td>{r.geography?.street || ""}</td>
-                      <td>{r.analytics?.macrozone || ""}</td>
+                      <td>{rowAdvertiser}</td>
+                      <td>{r?.geography?.street || ""}</td>
+                      <td>{r?.analytics?.macrozone || ""}</td>
                       <td style={{ textAlign: "right" }}>
-                        <button onClick={() => openDetails(l)}>
-                          Vedi dettagli
-                        </button>
+                        <button onClick={() => openDetails(l)}>Vedi dettagli</button>
                       </td>
                     </tr>
                   );
@@ -345,9 +347,7 @@ export default function App() {
               </button>
             </div>
 
-            {firstImg && (
-              <img src={firstImg} alt="" className="drawer-img" />
-            )}
+            {firstImg && <img src={firstImg} alt="" className="drawer-img" />}
 
             <div className="drawer-grid">
               <div className="kv">
@@ -363,54 +363,42 @@ export default function App() {
 
               <div className="kv">
                 <div className="kv-label">Agenzia / Privato</div>
-                <div className="kv-value">{advertiser || "—"}</div>
+                <div className="kv-value">{drawerAdvertiser || "—"}</div>
               </div>
 
               <div className="kv">
                 <div className="kv-label">Via</div>
-                <div className="kv-value">{dr.geography?.street || "—"}</div>
+                <div className="kv-value">{dr?.geography?.street || "—"}</div>
               </div>
 
               <div className="kv">
                 <div className="kv-label">Zona</div>
-                <div className="kv-value">
-                  {dr.analytics?.macrozone || "—"}
-                </div>
+                <div className="kv-value">{dr?.analytics?.macrozone || "—"}</div>
               </div>
 
               <div className="kv">
                 <div className="kv-label">Vani</div>
-                <div className="kv-value">
-                  {safe(dr.topology?.rooms, "—")}
-                </div>
+                <div className="kv-value">{safe(dr?.topology?.rooms, "—")}</div>
               </div>
 
               <div className="kv">
                 <div className="kv-label">WC</div>
-                <div className="kv-value">
-                  {safe(dr.topology?.bathrooms, "—")}
-                </div>
+                <div className="kv-value">{safe(dr?.topology?.bathrooms, "—")}</div>
               </div>
 
               <div className="kv">
                 <div className="kv-label">Piano</div>
-                <div className="kv-value">
-                  {safe(dr.topology?.floor, "—")}
-                </div>
+                <div className="kv-value">{safe(dr?.topology?.floor, "—")}</div>
               </div>
 
               <div className="kv">
                 <div className="kv-label">Balcone</div>
-                <div className="kv-value">
-                  {dr.topology?.balcony ? "Sì" : "—"}
-                </div>
+                <div className="kv-value">{dr?.topology?.balcony ? "Sì" : "—"}</div>
               </div>
 
               <div className="kv">
                 <div className="kv-label">Stato immobile</div>
-                <div className="kv-value">
-                  {dr.analytics?.propertyStatus || "—"}
-                </div>
+                <div className="kv-value">{dr?.analytics?.propertyStatus || "—"}</div>
               </div>
             </div>
           </div>
