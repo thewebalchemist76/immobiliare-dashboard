@@ -127,7 +127,7 @@ button:disabled {
 }
 
 /* ===================================================== */
-/* ===== CRM TABLE (ORA COMPATTA) ======================= */
+/* ===== CRM TABLE (COMPATTA) =========================== */
 /* ===================================================== */
 
 .table-wrap {
@@ -135,7 +135,6 @@ button:disabled {
   overflow-x: auto;
 }
 
-/* prima era min-width: 2400px (forzava scroll); ora è fluida */
 .crm-table {
   width: 100%;
   border-collapse: collapse;
@@ -151,18 +150,15 @@ button:disabled {
   background: #fff;
 }
 
-/* header */
 .crm-table thead th {
   font-weight: 700;
   color: #374151;
 }
 
-/* per default non forziamo nowrap: così “Via/Zona/Agenzia” vanno a capo */
 .crm-table td {
   white-space: normal;
 }
 
-/* link */
 .crm-table a {
   color: var(--accent);
   font-weight: 600;
@@ -176,8 +172,18 @@ button:disabled {
   border-radius: 4px;
 }
 
+/* Note: cella tabella */
+.note-cell {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
 /* ===================================================== */
-/* ===== DETAILS DRAWER (per togliere inline style) ===== */
+/* ===== DETAILS DRAWER ================================= */
 /* ===================================================== */
 
 .drawer-overlay {
@@ -245,4 +251,21 @@ button:disabled {
 .kv-value {
   font-size: 14px;
   color: var(--text);
+}
+
+/* textarea note */
+.note-textarea {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 12px;
+  font-family: inherit;
+  font-size: 14px;
+  resize: vertical;
+  outline: none;
+}
+
+.note-textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.15);
 }
