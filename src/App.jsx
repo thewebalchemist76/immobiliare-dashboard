@@ -47,6 +47,13 @@ export default function App() {
   const saveTimerRef = useRef(null);
   const lastSavedRef = useRef("");
 
+  const clearAuthHash = () => {
+    // rimuove #access_token=... e simili senza reload
+    if (window.location.hash) {
+      history.replaceState(null, "", window.location.pathname + window.location.search);
+    }
+  };
+
   const openDetails = (l) => {
     setDetailsListing(l);
     setDetailsOpen(true);
@@ -67,16 +74,35 @@ export default function App() {
 
   /* ================= AUTH ================= */
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => setSession(data.session));
-    const { data } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
+    // se arrivi da magiclink, togli hash dopo che Supabase ha letto la sessione
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session || null);
+      if (data.session) clearAuthHash();
+    });
+
+    const { data } = supabase.auth.onAuthStateChange((_e, s) => {
+      setSession(s || null);
+      if (s) clearAuthHash();
+    });
+
     return () => data.subscription.unsubscribe();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const signOut = async () => supabase.auth.signOut();
+  const signOut = async () => {
+    closeDetails();
+    await supabase.auth.signOut();
+    clearAuthHash();
+    // opzionale: riportati alla home pulita
+    // window.location.assign(window.location.origin);
+  };
 
   /* ================= AGENCY ================= */
   useEffect(() => {
-    if (!session) return;
+    if (!session) {
+      setAgency(null);
+      return;
+    }
     supabase
       .from("agencies")
       .select("*")
@@ -107,15 +133,17 @@ export default function App() {
     setLoadingRun(true);
     setRunMsg("Ricerca in corso…");
 
-    await fetch(`${BACKEND_URL}/run-agency`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ agency_id: agency.id }),
-    });
-
-    setLoadingRun(false);
-    setRunMsg("");
-    loadRuns();
+    try {
+      await fetch(`${BACKEND_URL}/run-agency`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agency_id: agency.id }),
+      });
+    } finally {
+      setLoadingRun(false);
+      setRunMsg("");
+      loadRuns();
+    }
   };
 
   /* ================= NOTES LOAD ================= */
@@ -217,16 +245,12 @@ export default function App() {
     const rows = data || [];
     setListings(rows);
 
-    // carica note SOLO per i listing della pagina corrente
     await loadNotesForListingIds(rows.map((x) => x.id));
 
-    // se drawer aperto e listing è nella nuova pagina, riallinea draft
+    // se cambi pagina, chiudi drawer per evitare ambiguità
     if (detailsOpen && detailsListing?.id) {
       const still = rows.find((x) => x.id === detailsListing.id);
-      if (!still) {
-        // se cambi pagina, chiudiamo il drawer per evitare salvataggi ambigui
-        closeDetails();
-      }
+      if (!still) closeDetails();
     }
   };
 
@@ -256,7 +280,28 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [noteDraft, detailsOpen, detailsListing?.id]);
 
-  if (!session) return null;
+  /* ================= LOGIN (prima era nullo) ================= */
+  if (!session) {
+    return (
+      <div className="card">
+        <h2>Login</h2>
+        <p className="muted">Inserisci la tua email per ricevere il magic link.</p>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            const email = e.target.email.value;
+            supabase.auth.signInWithOtp({
+              email,
+              options: { emailRedirectTo: window.location.origin },
+            });
+          }}
+        >
+          <input name="email" placeholder="email" />
+          <button>Invia magic link</button>
+        </form>
+      </div>
+    );
+  }
 
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
@@ -264,10 +309,8 @@ export default function App() {
   const dl = detailsListing;
   const dr = dl?.raw || {};
   const portal = dl?.url?.includes("immobiliare") ? "immobiliare.it" : "";
-  const drawerAdvertiser =
-    dr?.analytics?.agencyName || dr?.analytics?.advertiser || "";
-  const firstImg =
-    dr?.media?.images?.[0]?.hd || dr?.media?.images?.[0]?.sd || "";
+  const drawerAdvertiser = dr?.analytics?.agencyName || dr?.analytics?.advertiser || "";
+  const firstImg = dr?.media?.images?.[0]?.hd || dr?.media?.images?.[0]?.sd || "";
 
   return (
     <div>
@@ -325,9 +368,7 @@ export default function App() {
                 value={priceMax}
                 onChange={(e) => setPriceMax(e.target.value)}
               />
-              <button onClick={() => loadListingsForRun(selectedRun, true, 0)}>
-                Applica
-              </button>
+              <button onClick={() => loadListingsForRun(selectedRun, true, 0)}>Applica</button>
               <button
                 onClick={resetFilters}
                 style={{ background: "#e5e7eb", color: "#111" }}
@@ -358,8 +399,7 @@ export default function App() {
                 {listings.map((l) => {
                   const r = l.raw || {};
                   const rowPortal = l?.url?.includes("immobiliare") ? "immobiliare.it" : "";
-                  const rowAdvertiser =
-                    r?.analytics?.agencyName || r?.analytics?.advertiser || "";
+                  const rowAdvertiser = r?.analytics?.agencyName || r?.analytics?.advertiser || "";
                   const noteSnippet = (notesByListing?.[l.id] || "").trim();
                   return (
                     <tr key={l.id}>
@@ -440,8 +480,7 @@ export default function App() {
               <div>
                 <div className="drawer-title">{safe(dr.title)}</div>
                 <div className="drawer-subtitle">
-                  {fmtDate(dl?.first_seen_at)} • {safe(dr.contract?.name)} • €{" "}
-                  {safe(dl?.price)}
+                  {fmtDate(dl?.first_seen_at)} • {safe(dr.contract?.name)} • € {safe(dl?.price)}
                 </div>
               </div>
               <button
