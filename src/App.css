@@ -64,6 +64,14 @@ button:disabled {
   cursor: not-allowed;
 }
 
+/* Pulsante piccolo (per "Vedi dettagli") */
+.btn-sm {
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1;
+}
+
 /* ===== ACTIONS ===== */
 .actions {
   display: flex;
@@ -172,14 +180,17 @@ button:disabled {
   border-radius: 4px;
 }
 
-/* Note: cella tabella */
+/* Note: cella tabella (scroll verticale) */
 .note-cell {
+  width: 320px;          /* larghezza stabile = meno “salti” */
   max-width: 320px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
+  max-height: 74px;      /* ~3-4 righe */
+  overflow-y: auto;      /* scroll verticale */
+  overflow-x: hidden;
+  white-space: normal;
+  word-break: break-word;
+  padding-right: 6px;    /* spazio per scrollbar */
+  scrollbar-gutter: stable;
 }
 
 /* ===================================================== */
