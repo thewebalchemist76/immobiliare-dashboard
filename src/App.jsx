@@ -59,9 +59,10 @@ export default function App() {
   const saveTimerRef = useRef(null);
   const lastSavedRef = useRef("");
 
-  // TL: elenco agenti della agency (per dropdown)
+  // AGENTS (per mapping user_id -> email, e per dropdown TL)
   const [agencyAgents, setAgencyAgents] = useState([]); // [{user_id,email,role}]
-  // TL: assegnazioni visibili per listing nella pagina corrente
+
+  // ASSIGNMENTS visibili per listing nella pagina corrente
   const [assignByListing, setAssignByListing] = useState({}); // { [listing_id]: agent_user_id }
 
   const clearAuthHash = () => {
@@ -269,8 +270,6 @@ export default function App() {
       return;
     }
 
-    // leggiamo tutte le note visibili (RLS deve permettere select same-agency)
-    // e mostriamo 1 nota per annuncio: la più recente (order updated_at desc).
     const { data, error } = await supabase
       .from("listing_notes")
       .select("listing_id, user_id, note, updated_at")
@@ -300,7 +299,6 @@ export default function App() {
     setNotesMetaByListing(metaMap);
     setNotesByListing(textMap);
 
-    // se drawer aperto, riallinea draft e readOnly in base alla nota "mostrata"
     if (detailsOpen && detailsListing?.id) {
       const m = metaMap[detailsListing.id] || null;
       const current = m?.note ?? "";
@@ -316,7 +314,6 @@ export default function App() {
   const upsertNote = async (listingId, note) => {
     if (!session?.user?.id || !listingId) return;
 
-    // se è read-only, non tentare update
     const meta = notesMetaByListing?.[listingId] || null;
     if (meta?.user_id && meta.user_id !== session.user.id) return;
 
@@ -336,13 +333,12 @@ export default function App() {
       return;
     }
 
-    // ricarica le note di TUTTI gli annunci in pagina (evita di "cancellare" le altre note in UI)
     await loadNotesForListingIds(listings.map((x) => x.id));
   };
 
-  /* ================= TL: AGENTS LIST ================= */
+  /* ================= AGENCY AGENTS (sempre: serve mapping email) ================= */
   const loadAgencyAgents = async () => {
-    if (!isTL || !agency?.id) {
+    if (!agency?.id) {
       setAgencyAgents([]);
       return;
     }
@@ -362,7 +358,7 @@ export default function App() {
 
     const normalized = (data || [])
       .map((a) => ({
-        user_id: a.user_id || a.id, // fallback legacy
+        user_id: a.user_id || a.id,
         email: a.email,
         role: a.role,
       }))
@@ -372,13 +368,18 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (isTL && agency?.id) loadAgencyAgents();
+    if (agency?.id) loadAgencyAgents();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isTL, agency?.id]);
+  }, [agency?.id]);
 
-  /* ================= TL: ASSIGNMENTS ================= */
+  const agentEmailByUserId = agencyAgents.reduce((acc, a) => {
+    acc[a.user_id] = a.email;
+    return acc;
+  }, {});
+
+  /* ================= ASSIGNMENTS (sempre SELECT, solo TL modifica) ================= */
   const loadAssignmentsForListingIds = async (listingIds) => {
-    if (!isTL || !agency?.id) {
+    if (!agency?.id) {
       setAssignByListing({});
       return;
     }
@@ -607,7 +608,10 @@ export default function App() {
   const drawerAdvertiser = dr?.analytics?.agencyName || dr?.analytics?.advertiser || "";
   const firstImg = dr?.media?.images?.[0]?.hd || dr?.media?.images?.[0]?.sd || "";
 
-  const renderListingsTable = ({ showAgentColumn }) => (
+  // showAgentColumn:
+  // - history: true (read-only)
+  // - team: true (editable, TL only)
+  const renderListingsTable = ({ showAgentColumn, agentEditable }) => (
     <div className="table-wrap">
       <table className="crm-table">
         <thead>
@@ -631,7 +635,9 @@ export default function App() {
             const rowPortal = l?.url?.includes("immobiliare") ? "immobiliare.it" : "";
             const rowAdvertiser = r?.analytics?.agencyName || r?.analytics?.advertiser || "";
             const noteSnippet = (notesByListing?.[l.id] || "").trim();
-            const assigned = assignByListing?.[l.id] || "";
+
+            const assignedUserId = assignByListing?.[l.id] || "";
+            const assignedEmail = assignedUserId ? agentEmailByUserId[assignedUserId] : "";
 
             return (
               <tr key={l.id}>
@@ -656,18 +662,24 @@ export default function App() {
 
                 {showAgentColumn && (
                   <td>
-                    <select
-                      value={assigned}
-                      onChange={(e) => upsertAssignment(l.id, e.target.value)}
-                      style={{ padding: "10px 12px", borderRadius: 12 }}
-                    >
-                      <option value="">—</option>
-                      {agencyAgents.map((a) => (
-                        <option key={a.user_id} value={a.user_id}>
-                          {a.email}
-                        </option>
-                      ))}
-                    </select>
+                    {agentEditable ? (
+                      <select
+                        value={assignedUserId}
+                        onChange={(e) => upsertAssignment(l.id, e.target.value)}
+                        style={{ padding: "10px 12px", borderRadius: 12 }}
+                      >
+                        <option value="">—</option>
+                        {agencyAgents.map((a) => (
+                          <option key={a.user_id} value={a.user_id}>
+                            {a.email}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <div className="muted" style={{ fontWeight: 600 }}>
+                        {assignedEmail || "—"}
+                      </div>
+                    )}
                   </td>
                 )}
 
@@ -756,7 +768,8 @@ export default function App() {
             </div>
           )}
 
-          {renderListingsTable({ showAgentColumn: false })}
+          {/* QUI: colonna Agente sempre visibile, read-only */}
+          {renderListingsTable({ showAgentColumn: true, agentEditable: false })}
 
           {selectedRun && (
             <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
@@ -827,7 +840,7 @@ export default function App() {
             </div>
           )}
 
-          {renderListingsTable({ showAgentColumn: true })}
+          {renderListingsTable({ showAgentColumn: true, agentEditable: true })}
 
           {selectedRun && (
             <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
