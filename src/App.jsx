@@ -43,11 +43,11 @@ export default function App() {
   const [loadingRun, setLoadingRun] = useState(false);
   const [runMsg, setRunMsg] = useState("");
 
-  // Notes maps:
-  // - notesByListingText: { [listing_id]: noteTextShownInTable }
-  // - notesMetaByListing: { [listing_id]: { user_id, note, updated_at } } (per drawer e permessi)
+  // Notes:
+  // - notesByListing: testo mostrato in tabella (1 nota per annuncio = la più recente)
+  // - notesMetaByListing: meta della nota mostrata (per read-only nel drawer)
   const [notesByListing, setNotesByListing] = useState({});
-  const [notesMetaByListing, setNotesMetaByListing] = useState({});
+  const [notesMetaByListing, setNotesMetaByListing] = useState({}); // { [listing_id]: { user_id, note, updated_at } }
 
   // Drawer dettagli
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -269,8 +269,8 @@ export default function App() {
       return;
     }
 
-    // NOTE: niente filtro user_id => leggiamo tutte le note visibili (RLS di agency)
-    // Mostriamo 1 nota per listing (la più recente).
+    // leggiamo tutte le note visibili (RLS deve permettere select same-agency)
+    // e mostriamo 1 nota per annuncio: la più recente (order updated_at desc).
     const { data, error } = await supabase
       .from("listing_notes")
       .select("listing_id, user_id, note, updated_at")
@@ -300,7 +300,7 @@ export default function App() {
     setNotesMetaByListing(metaMap);
     setNotesByListing(textMap);
 
-    // se drawer aperto, riallinea contenuto e readOnly (se la nota è cambiata/autore diverso)
+    // se drawer aperto, riallinea draft e readOnly in base alla nota "mostrata"
     if (detailsOpen && detailsListing?.id) {
       const m = metaMap[detailsListing.id] || null;
       const current = m?.note ?? "";
@@ -315,6 +315,10 @@ export default function App() {
 
   const upsertNote = async (listingId, note) => {
     if (!session?.user?.id || !listingId) return;
+
+    // se è read-only, non tentare update
+    const meta = notesMetaByListing?.[listingId] || null;
+    if (meta?.user_id && meta.user_id !== session.user.id) return;
 
     const payload = {
       listing_id: listingId,
@@ -332,8 +336,8 @@ export default function App() {
       return;
     }
 
-    // dopo save, ricarichiamo note per coerenza (e per aggiornare metaMap)
-    await loadNotesForListingIds([listingId]);
+    // ricarica le note di TUTTI gli annunci in pagina (evita di "cancellare" le altre note in UI)
+    await loadNotesForListingIds(listings.map((x) => x.id));
   };
 
   /* ================= TL: AGENTS LIST ================= */
@@ -358,7 +362,7 @@ export default function App() {
 
     const normalized = (data || [])
       .map((a) => ({
-        user_id: a.user_id || a.id,
+        user_id: a.user_id || a.id, // fallback legacy
         email: a.email,
         role: a.role,
       }))
@@ -583,7 +587,9 @@ export default function App() {
       <div className="card">
         <h2>Dashboard</h2>
         <p className="muted">{session.user.email}</p>
-        <p className="muted">Nessun profilo agente associato a questo account. Contatta il Team Leader.</p>
+        <p className="muted">
+          Nessun profilo agente associato a questo account. Contatta il Team Leader.
+        </p>
         {agentProfileError && <p className="muted">Dettaglio errore: {agentProfileError}</p>}
         <div className="actions">
           <button onClick={signOut}>Logout</button>
