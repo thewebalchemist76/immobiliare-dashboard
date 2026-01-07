@@ -20,10 +20,10 @@ export default function App() {
 
   const [session, setSession] = useState(null);
 
-  // agent profile (tabella agents)
-  const [agentProfile, setAgentProfile] = useState(null); // { role, agency_id, email, user_id }
+  // agent profile (da tabella agents)
+  const [agentProfile, setAgentProfile] = useState(null); // { id, user_id, role, agency_id, email }
 
-  // agency (via agents.agency_id oppure fallback legacy via agencies.user_id)
+  // agency (caricata via agentProfile.agency_id)
   const [agency, setAgency] = useState(null);
 
   const [view, setView] = useState("dashboard"); // dashboard | history | team
@@ -108,80 +108,62 @@ export default function App() {
     const load = async () => {
       if (!session?.user?.id) {
         setAgentProfile(null);
+        setAgency(null);
         return;
       }
 
-      // NON usare .single(): se per sbaglio ci sono duplicati, .single() fallisce e ti "spegne" tutto
+      // match su user_id oppure su id (legacy)
       const { data, error } = await supabase
         .from("agents")
-        .select("email, role, agency_id, user_id, created_at")
-        .eq("user_id", session.user.id)
+        .select("id, user_id, email, role, agency_id, created_at")
+        .or(`user_id.eq.${session.user.id},id.eq.${session.user.id}`)
         .order("created_at", { ascending: false });
 
       if (error) {
         console.error("load agentProfile:", error.message);
         setAgentProfile(null);
+        setAgency(null);
         return;
       }
 
-      setAgentProfile((data && data.length ? data[0] : null) || null);
+      const row = (data && data.length ? data[0] : null) || null;
+
+      // normalizza: garantisci user_id valorizzato
+      if (row && !row.user_id) row.user_id = row.id;
+
+      setAgentProfile(row);
     };
 
     load();
   }, [session?.user?.id]);
 
-  /* ================= AGENCY (via agents.agency_id, fallback legacy) ================= */
+  /* ================= AGENCY (via agents.agency_id) ================= */
   useEffect(() => {
-    const load = async () => {
-      if (!session?.user?.id) {
-        setAgency(null);
-        return;
-      }
+    if (!agentProfile?.agency_id) {
+      setAgency(null);
+      return;
+    }
 
-      // 1) preferito: via agents.agency_id
-      if (agentProfile?.agency_id) {
-        const { data, error } = await supabase
-          .from("agencies")
-          .select("*")
-          .eq("id", agentProfile.agency_id)
-          .maybeSingle();
-
+    supabase
+      .from("agencies")
+      .select("*")
+      .eq("id", agentProfile.agency_id)
+      .single()
+      .then(({ data, error }) => {
         if (error) {
-          console.error("load agency (by id):", error.message);
+          console.error("load agency:", error.message);
           setAgency(null);
           return;
         }
-
         setAgency(data || null);
-        return;
-      }
+      });
+  }, [agentProfile?.agency_id]);
 
-      // 2) fallback legacy: agencies.user_id = auth uid (serve per non rompere il TL)
-      const { data, error } = await supabase
-        .from("agencies")
-        .select("*")
-        .eq("user_id", session.user.id)
-        .maybeSingle();
-
-      if (error) {
-        console.error("load agency (legacy):", error.message);
-        setAgency(null);
-        return;
-      }
-
-      setAgency(data || null);
-    };
-
-    load();
-  }, [session?.user?.id, agentProfile?.agency_id]);
-
-  // TL se agents.role === 'tl' (principale) oppure se sei owner dell'agency (fallback legacy)
-  const isTL = agentProfile?.role === "tl" || (agency?.user_id && agency.user_id === session?.user?.id);
+  const isTL = agentProfile?.role === "tl";
 
   /* ================= RUNS ================= */
   const loadRuns = async () => {
     if (!agency?.id) return;
-
     const { data, error } = await supabase
       .from("agency_runs")
       .select("id, created_at, new_listings_count, total_listings")
@@ -221,7 +203,7 @@ export default function App() {
     }
   };
 
-  /* ================= NOTES ================= */
+  /* ================= NOTES LOAD ================= */
   const loadNotesForListingIds = async (listingIds) => {
     if (!session?.user?.id) return;
     if (!listingIds?.length) {
@@ -280,7 +262,7 @@ export default function App() {
 
     const { data, error } = await supabase
       .from("agents")
-      .select("user_id, email, role")
+      .select("id, user_id, email, role")
       .eq("agency_id", agency.id)
       .order("role", { ascending: true })
       .order("email", { ascending: true });
@@ -291,8 +273,15 @@ export default function App() {
       return;
     }
 
-    // serve user_id valorizzato (auth.users.id)
-    setAgencyAgents((data || []).filter((a) => !!a.user_id));
+    const normalized = (data || [])
+      .map((a) => ({
+        user_id: a.user_id || a.id, // fallback legacy
+        email: a.email,
+        role: a.role,
+      }))
+      .filter((a) => !!a.user_id);
+
+    setAgencyAgents(normalized);
   };
 
   useEffect(() => {
@@ -300,7 +289,7 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isTL, agency?.id]);
 
-  /* ================= TL: ASSIGNMENTS ================= */
+  /* ================= TL: ASSIGNMENTS LOAD ================= */
   const loadAssignmentsForListingIds = async (listingIds) => {
     if (!isTL || !agency?.id) {
       setAssignByListing({});
@@ -431,6 +420,7 @@ export default function App() {
     setListings(rows);
 
     const pageListingIds = rows.map((x) => x.id);
+
     await loadNotesForListingIds(pageListingIds);
     await loadAssignmentsForListingIds(pageListingIds);
 
@@ -489,14 +479,13 @@ export default function App() {
     );
   }
 
-  // Se non troviamo agents per qualche motivo, ma abbiamo agency legacy, NON bloccare la UI
-  if (!agency?.id) {
+  if (!agentProfile?.agency_id) {
     return (
       <div className="card">
         <h2>Dashboard</h2>
         <p className="muted">{session.user.email}</p>
         <p className="muted">
-          Nessun profilo/agenzia associata a questo account. Contatta il Team Leader.
+          Nessun profilo agente associato a questo account. Contatta il Team Leader.
         </p>
         <div className="actions">
           <button onClick={signOut}>Logout</button>
