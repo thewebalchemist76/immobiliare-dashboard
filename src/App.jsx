@@ -43,8 +43,11 @@ export default function App() {
   const [loadingRun, setLoadingRun] = useState(false);
   const [runMsg, setRunMsg] = useState("");
 
-  // Notes map: { [listing_id]: note }
+  // Notes maps:
+  // - notesByListingText: { [listing_id]: noteTextShownInTable }
+  // - notesMetaByListing: { [listing_id]: { user_id, note, updated_at } } (per drawer e permessi)
   const [notesByListing, setNotesByListing] = useState({});
+  const [notesMetaByListing, setNotesMetaByListing] = useState({});
 
   // Drawer dettagli
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -52,6 +55,7 @@ export default function App() {
 
   // Drawer note state + debounce save
   const [noteDraft, setNoteDraft] = useState("");
+  const [noteReadOnly, setNoteReadOnly] = useState(false);
   const saveTimerRef = useRef(null);
   const lastSavedRef = useRef("");
 
@@ -70,7 +74,13 @@ export default function App() {
     setDetailsListing(l);
     setDetailsOpen(true);
 
-    const current = notesByListing?.[l.id] ?? "";
+    const meta = notesMetaByListing?.[l.id] || null;
+    const current = meta?.note ?? "";
+    const ownerId = meta?.user_id || null;
+
+    const ro = !!ownerId && ownerId !== session?.user?.id;
+    setNoteReadOnly(ro);
+
     setNoteDraft(current);
     lastSavedRef.current = current;
   };
@@ -79,6 +89,7 @@ export default function App() {
     setDetailsOpen(false);
     setDetailsListing(null);
     setNoteDraft("");
+    setNoteReadOnly(false);
     lastSavedRef.current = "";
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = null;
@@ -123,7 +134,6 @@ export default function App() {
       const uid = session.user.id;
       const email = session.user.email;
 
-      // helper: maybeSingle senza crashare su "no rows"
       const tryQuery = async (qb) => {
         const { data, error } = await qb.maybeSingle();
         if (error) return { data: null, error };
@@ -132,20 +142,29 @@ export default function App() {
 
       // 1) match legacy: agents.id == auth.uid()
       let res = await tryQuery(
-        supabase.from("agents").select("id, user_id, email, role, agency_id, created_at").eq("id", uid)
+        supabase
+          .from("agents")
+          .select("id, user_id, email, role, agency_id, created_at")
+          .eq("id", uid)
       );
 
       // 2) match standard: agents.user_id == auth.uid()
       if (!res.data && !res.error) {
         res = await tryQuery(
-          supabase.from("agents").select("id, user_id, email, role, agency_id, created_at").eq("user_id", uid)
+          supabase
+            .from("agents")
+            .select("id, user_id, email, role, agency_id, created_at")
+            .eq("user_id", uid)
         );
       }
 
-      // 3) fallback: email match (utile se user_id è null o RLS strana)
+      // 3) fallback: email match
       if (!res.data && !res.error && email) {
         res = await tryQuery(
-          supabase.from("agents").select("id, user_id, email, role, agency_id, created_at").eq("email", email)
+          supabase
+            .from("agents")
+            .select("id, user_id, email, role, agency_id, created_at")
+            .eq("email", email)
         );
       }
 
@@ -180,7 +199,7 @@ export default function App() {
         .from("agencies")
         .select("*")
         .eq("id", agentProfile.agency_id)
-        .single();
+        .maybeSingle();
 
       if (error) {
         console.error("load agency:", error.message);
@@ -246,26 +265,52 @@ export default function App() {
     if (!session?.user?.id) return;
     if (!listingIds?.length) {
       setNotesByListing({});
+      setNotesMetaByListing({});
       return;
     }
 
+    // NOTE: niente filtro user_id => leggiamo tutte le note visibili (RLS di agency)
+    // Mostriamo 1 nota per listing (la più recente).
     const { data, error } = await supabase
       .from("listing_notes")
-      .select("listing_id, note")
-      .eq("user_id", session.user.id)
-      .in("listing_id", listingIds);
+      .select("listing_id, user_id, note, updated_at")
+      .in("listing_id", listingIds)
+      .order("updated_at", { ascending: false });
 
     if (error) {
       console.error("loadNotesForListingIds:", error.message);
       setNotesByListing({});
+      setNotesMetaByListing({});
       return;
     }
 
-    const map = {};
+    const metaMap = {};
+    const textMap = {};
     (data || []).forEach((r) => {
-      map[r.listing_id] = r.note || "";
+      if (!metaMap[r.listing_id]) {
+        metaMap[r.listing_id] = {
+          user_id: r.user_id,
+          note: r.note || "",
+          updated_at: r.updated_at,
+        };
+        textMap[r.listing_id] = (r.note || "").trim();
+      }
     });
-    setNotesByListing(map);
+
+    setNotesMetaByListing(metaMap);
+    setNotesByListing(textMap);
+
+    // se drawer aperto, riallinea contenuto e readOnly (se la nota è cambiata/autore diverso)
+    if (detailsOpen && detailsListing?.id) {
+      const m = metaMap[detailsListing.id] || null;
+      const current = m?.note ?? "";
+      const ownerId = m?.user_id || null;
+      const ro = !!ownerId && ownerId !== session.user.id;
+
+      setNoteReadOnly(ro);
+      setNoteDraft(current);
+      lastSavedRef.current = current;
+    }
   };
 
   const upsertNote = async (listingId, note) => {
@@ -287,7 +332,8 @@ export default function App() {
       return;
     }
 
-    setNotesByListing((prev) => ({ ...prev, [listingId]: note ?? "" }));
+    // dopo save, ricarichiamo note per coerenza (e per aggiornare metaMap)
+    await loadNotesForListingIds([listingId]);
   };
 
   /* ================= TL: AGENTS LIST ================= */
@@ -312,7 +358,7 @@ export default function App() {
 
     const normalized = (data || [])
       .map((a) => ({
-        user_id: a.user_id || a.id, // fallback legacy
+        user_id: a.user_id || a.id,
         email: a.email,
         role: a.role,
       }))
@@ -414,6 +460,7 @@ export default function App() {
       setListings([]);
       setTotalCount(0);
       setNotesByListing({});
+      setNotesMetaByListing({});
       setAssignByListing({});
       return;
     }
@@ -472,9 +519,10 @@ export default function App() {
     if (selectedRun) loadListingsForRun(selectedRun, true, 0);
   };
 
-  // autosave debounce note (solo se drawer aperto)
+  // autosave debounce note (solo se drawer aperto e non readOnly)
   useEffect(() => {
     if (!detailsOpen || !detailsListing?.id) return;
+    if (noteReadOnly) return;
 
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
 
@@ -490,7 +538,7 @@ export default function App() {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [noteDraft, detailsOpen, detailsListing?.id]);
+  }, [noteDraft, detailsOpen, detailsListing?.id, noteReadOnly]);
 
   /* ================= LOGIN ================= */
   if (!session) {
@@ -515,16 +563,14 @@ export default function App() {
     );
   }
 
-  // loading gate: evita "nessun profilo" mentre sta caricando
+  // loading gate
   if (agentProfileLoading || agencyLoading) {
     return (
       <div className="card">
         <h2>Dashboard</h2>
         <p className="muted">{session.user.email}</p>
         <p className="muted">Caricamento profilo…</p>
-        {agentProfileError && (
-          <p className="muted">Errore profilo agente: {agentProfileError}</p>
-        )}
+        {agentProfileError && <p className="muted">Errore profilo agente: {agentProfileError}</p>}
         <div className="actions">
           <button onClick={signOut}>Logout</button>
         </div>
@@ -537,9 +583,7 @@ export default function App() {
       <div className="card">
         <h2>Dashboard</h2>
         <p className="muted">{session.user.email}</p>
-        <p className="muted">
-          Nessun profilo agente associato a questo account. Contatta il Team Leader.
-        </p>
+        <p className="muted">Nessun profilo agente associato a questo account. Contatta il Team Leader.</p>
         {agentProfileError && <p className="muted">Dettaglio errore: {agentProfileError}</p>}
         <div className="actions">
           <button onClick={signOut}>Logout</button>
@@ -860,15 +904,23 @@ export default function App() {
 
               <div className="kv">
                 <div className="kv-label">Note</div>
+                {noteReadOnly && (
+                  <div className="muted" style={{ marginBottom: 6 }}>
+                    Nota di un altro agente (sola lettura).
+                  </div>
+                )}
                 <textarea
                   className="note-textarea"
                   rows={6}
-                  placeholder="Scrivi note…"
+                  placeholder={noteReadOnly ? "Sola lettura" : "Scrivi note…"}
                   value={noteDraft}
-                  onChange={(e) => setNoteDraft(e.target.value)}
+                  readOnly={noteReadOnly}
+                  onChange={(e) => {
+                    if (!noteReadOnly) setNoteDraft(e.target.value);
+                  }}
                 />
                 <div className="muted" style={{ marginTop: 6 }}>
-                  Salvataggio automatico.
+                  {noteReadOnly ? "Non puoi modificare questa nota." : "Salvataggio automatico."}
                 </div>
               </div>
 
