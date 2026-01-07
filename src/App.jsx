@@ -20,11 +20,14 @@ export default function App() {
 
   const [session, setSession] = useState(null);
 
-  // agent profile (da tabella agents)
+  // agent profile (tabella agents)
   const [agentProfile, setAgentProfile] = useState(null); // { id, user_id, role, agency_id, email }
+  const [agentProfileLoading, setAgentProfileLoading] = useState(true);
+  const [agentProfileError, setAgentProfileError] = useState("");
 
-  // agency (caricata via agentProfile.agency_id)
+  // agency (via agentProfile.agency_id)
   const [agency, setAgency] = useState(null);
+  const [agencyLoading, setAgencyLoading] = useState(true);
 
   const [view, setView] = useState("dashboard"); // dashboard | history | team
   const [runs, setRuns] = useState([]);
@@ -105,58 +108,92 @@ export default function App() {
 
   /* ================= AGENT PROFILE (agents) ================= */
   useEffect(() => {
-    const load = async () => {
+    const loadAgentProfile = async () => {
       if (!session?.user?.id) {
         setAgentProfile(null);
-        setAgency(null);
+        setAgentProfileError("");
+        setAgentProfileLoading(false);
         return;
       }
 
-      // match su user_id oppure su id (legacy)
-      const { data, error } = await supabase
-        .from("agents")
-        .select("id, user_id, email, role, agency_id, created_at")
-        .or(`user_id.eq.${session.user.id},id.eq.${session.user.id}`)
-        .order("created_at", { ascending: false });
+      setAgentProfileLoading(true);
+      setAgentProfileError("");
+      setAgentProfile(null);
 
-      if (error) {
-        console.error("load agentProfile:", error.message);
+      const uid = session.user.id;
+      const email = session.user.email;
+
+      // helper: maybeSingle senza crashare su "no rows"
+      const tryQuery = async (qb) => {
+        const { data, error } = await qb.maybeSingle();
+        if (error) return { data: null, error };
+        return { data, error: null };
+      };
+
+      // 1) match legacy: agents.id == auth.uid()
+      let res = await tryQuery(
+        supabase.from("agents").select("id, user_id, email, role, agency_id, created_at").eq("id", uid)
+      );
+
+      // 2) match standard: agents.user_id == auth.uid()
+      if (!res.data && !res.error) {
+        res = await tryQuery(
+          supabase.from("agents").select("id, user_id, email, role, agency_id, created_at").eq("user_id", uid)
+        );
+      }
+
+      // 3) fallback: email match (utile se user_id è null o RLS strana)
+      if (!res.data && !res.error && email) {
+        res = await tryQuery(
+          supabase.from("agents").select("id, user_id, email, role, agency_id, created_at").eq("email", email)
+        );
+      }
+
+      if (res.error) {
+        console.error("load agentProfile:", res.error.message);
+        setAgentProfileError(res.error.message);
         setAgentProfile(null);
-        setAgency(null);
+        setAgentProfileLoading(false);
         return;
       }
 
-      const row = (data && data.length ? data[0] : null) || null;
-
-      // normalizza: garantisci user_id valorizzato
-      if (row && !row.user_id) row.user_id = row.id;
-
+      const row = res.data || null;
+      if (row && !row.user_id) row.user_id = row.id; // normalize legacy
       setAgentProfile(row);
+      setAgentProfileLoading(false);
     };
 
-    load();
-  }, [session?.user?.id]);
+    loadAgentProfile();
+  }, [session?.user?.id, session?.user?.email]);
 
   /* ================= AGENCY (via agents.agency_id) ================= */
   useEffect(() => {
-    if (!agentProfile?.agency_id) {
-      setAgency(null);
-      return;
-    }
+    const loadAgency = async () => {
+      if (!agentProfile?.agency_id) {
+        setAgency(null);
+        setAgencyLoading(false);
+        return;
+      }
 
-    supabase
-      .from("agencies")
-      .select("*")
-      .eq("id", agentProfile.agency_id)
-      .single()
-      .then(({ data, error }) => {
-        if (error) {
-          console.error("load agency:", error.message);
-          setAgency(null);
-          return;
-        }
-        setAgency(data || null);
-      });
+      setAgencyLoading(true);
+      const { data, error } = await supabase
+        .from("agencies")
+        .select("*")
+        .eq("id", agentProfile.agency_id)
+        .single();
+
+      if (error) {
+        console.error("load agency:", error.message);
+        setAgency(null);
+        setAgencyLoading(false);
+        return;
+      }
+
+      setAgency(data || null);
+      setAgencyLoading(false);
+    };
+
+    loadAgency();
   }, [agentProfile?.agency_id]);
 
   const isTL = agentProfile?.role === "tl";
@@ -164,6 +201,7 @@ export default function App() {
   /* ================= RUNS ================= */
   const loadRuns = async () => {
     if (!agency?.id) return;
+
     const { data, error } = await supabase
       .from("agency_runs")
       .select("id, created_at, new_listings_count, total_listings")
@@ -203,7 +241,7 @@ export default function App() {
     }
   };
 
-  /* ================= NOTES LOAD ================= */
+  /* ================= NOTES ================= */
   const loadNotesForListingIds = async (listingIds) => {
     if (!session?.user?.id) return;
     if (!listingIds?.length) {
@@ -227,7 +265,6 @@ export default function App() {
     (data || []).forEach((r) => {
       map[r.listing_id] = r.note || "";
     });
-
     setNotesByListing(map);
   };
 
@@ -289,7 +326,7 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isTL, agency?.id]);
 
-  /* ================= TL: ASSIGNMENTS LOAD ================= */
+  /* ================= TL: ASSIGNMENTS ================= */
   const loadAssignmentsForListingIds = async (listingIds) => {
     if (!isTL || !agency?.id) {
       setAssignByListing({});
@@ -322,7 +359,6 @@ export default function App() {
   const upsertAssignment = async (listingId, agentUserId) => {
     if (!isTL || !agency?.id || !session?.user?.id) return;
 
-    // unassign
     if (!agentUserId) {
       const { error } = await supabase
         .from("listing_assignments")
@@ -479,6 +515,23 @@ export default function App() {
     );
   }
 
+  // loading gate: evita "nessun profilo" mentre sta caricando
+  if (agentProfileLoading || agencyLoading) {
+    return (
+      <div className="card">
+        <h2>Dashboard</h2>
+        <p className="muted">{session.user.email}</p>
+        <p className="muted">Caricamento profilo…</p>
+        {agentProfileError && (
+          <p className="muted">Errore profilo agente: {agentProfileError}</p>
+        )}
+        <div className="actions">
+          <button onClick={signOut}>Logout</button>
+        </div>
+      </div>
+    );
+  }
+
   if (!agentProfile?.agency_id) {
     return (
       <div className="card">
@@ -487,6 +540,7 @@ export default function App() {
         <p className="muted">
           Nessun profilo agente associato a questo account. Contatta il Team Leader.
         </p>
+        {agentProfileError && <p className="muted">Dettaglio errore: {agentProfileError}</p>}
         <div className="actions">
           <button onClick={signOut}>Logout</button>
         </div>
