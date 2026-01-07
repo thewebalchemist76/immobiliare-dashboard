@@ -52,6 +52,11 @@ export default function App() {
   const saveTimerRef = useRef(null);
   const lastSavedRef = useRef("");
 
+  // TL: elenco agenti della agency (per dropdown)
+  const [agencyAgents, setAgencyAgents] = useState([]); // [{user_id,email,role}]
+  // TL: assegnazioni visibili per listing nella pagina corrente
+  const [assignByListing, setAssignByListing] = useState({}); // { [listing_id]: agent_user_id }
+
   const clearAuthHash = () => {
     if (window.location.hash) {
       history.replaceState(null, "", window.location.pathname + window.location.search);
@@ -143,6 +148,8 @@ export default function App() {
         setAgency(data || null);
       });
   }, [agentProfile?.agency_id]);
+
+  const isTL = agentProfile?.role === "tl";
 
   /* ================= RUNS ================= */
   const loadRuns = async () => {
@@ -236,6 +243,107 @@ export default function App() {
     setNotesByListing((prev) => ({ ...prev, [listingId]: note ?? "" }));
   };
 
+  /* ================= TL: AGENTS LIST ================= */
+  const loadAgencyAgents = async () => {
+    if (!isTL || !agency?.id) {
+      setAgencyAgents([]);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("agents")
+      .select("user_id, email, role")
+      .eq("agency_id", agency.id)
+      .order("role", { ascending: true })
+      .order("email", { ascending: true });
+
+    if (error) {
+      console.error("loadAgencyAgents:", error.message);
+      setAgencyAgents([]);
+      return;
+    }
+
+    setAgencyAgents((data || []).filter((a) => !!a.user_id));
+  };
+
+  useEffect(() => {
+    if (isTL && agency?.id) loadAgencyAgents();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isTL, agency?.id]);
+
+  /* ================= TL: ASSIGNMENTS LOAD ================= */
+  const loadAssignmentsForListingIds = async (listingIds) => {
+    if (!isTL || !agency?.id) {
+      setAssignByListing({});
+      return;
+    }
+    if (!listingIds?.length) {
+      setAssignByListing({});
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("listing_assignments")
+      .select("listing_id, agent_user_id")
+      .eq("agency_id", agency.id)
+      .in("listing_id", listingIds);
+
+    if (error) {
+      console.error("loadAssignmentsForListingIds:", error.message);
+      setAssignByListing({});
+      return;
+    }
+
+    const map = {};
+    (data || []).forEach((r) => {
+      map[r.listing_id] = r.agent_user_id;
+    });
+    setAssignByListing(map);
+  };
+
+  const upsertAssignment = async (listingId, agentUserId) => {
+    if (!isTL || !agency?.id || !session?.user?.id) return;
+
+    // unassign
+    if (!agentUserId) {
+      const { error } = await supabase
+        .from("listing_assignments")
+        .delete()
+        .eq("agency_id", agency.id)
+        .eq("listing_id", listingId);
+
+      if (error) {
+        console.error("delete assignment:", error.message);
+        return;
+      }
+      setAssignByListing((prev) => {
+        const next = { ...prev };
+        delete next[listingId];
+        return next;
+      });
+      return;
+    }
+
+    const payload = {
+      agency_id: agency.id,
+      listing_id: listingId,
+      agent_user_id: agentUserId,
+      assigned_by: session.user.id,
+      assigned_at: new Date().toISOString(),
+    };
+
+    const { error } = await supabase.from("listing_assignments").upsert(payload, {
+      onConflict: "agency_id,listing_id",
+    });
+
+    if (error) {
+      console.error("upsertAssignment:", error.message);
+      return;
+    }
+
+    setAssignByListing((prev) => ({ ...prev, [listingId]: agentUserId }));
+  };
+
   /* ================= LOAD LISTINGS ================= */
   const loadListingsForRun = async (run, resetPage = true, pageOverride = null) => {
     if (!run) return;
@@ -252,6 +360,7 @@ export default function App() {
       setListings([]);
       setTotalCount(0);
       setNotesByListing({});
+      setAssignByListing({});
       return;
     }
 
@@ -292,7 +401,10 @@ export default function App() {
     const rows = data || [];
     setListings(rows);
 
-    await loadNotesForListingIds(rows.map((x) => x.id));
+    const pageListingIds = rows.map((x) => x.id);
+
+    await loadNotesForListingIds(pageListingIds);
+    await loadAssignmentsForListingIds(pageListingIds);
 
     if (detailsOpen && detailsListing?.id) {
       const still = rows.find((x) => x.id === detailsListing.id);
@@ -349,7 +461,6 @@ export default function App() {
     );
   }
 
-  // se l'utente è autenticato ma non ha profilo agent: messaggio chiaro
   if (!agentProfile?.agency_id) {
     return (
       <div className="card">
@@ -365,7 +476,6 @@ export default function App() {
     );
   }
 
-  const isTL = agentProfile?.role === "tl";
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
   // Drawer derivati
@@ -374,6 +484,91 @@ export default function App() {
   const portal = dl?.url?.includes("immobiliare") ? "immobiliare.it" : "";
   const drawerAdvertiser = dr?.analytics?.agencyName || dr?.analytics?.advertiser || "";
   const firstImg = dr?.media?.images?.[0]?.hd || dr?.media?.images?.[0]?.sd || "";
+
+  const renderListingsTable = ({ showAgentColumn }) => (
+    <div className="table-wrap">
+      <table className="crm-table">
+        <thead>
+          <tr>
+            <th>Data acquisizione</th>
+            <th>Ultimo aggiornamento</th>
+            <th>Titolo</th>
+            <th>Prezzo</th>
+            <th>Contratto</th>
+            {showAgentColumn && <th>Agente</th>}
+            <th>Agenzia / Privato</th>
+            <th>Via</th>
+            <th>Zona</th>
+            <th>Note</th>
+            <th style={{ textAlign: "right" }}>Azioni</th>
+          </tr>
+        </thead>
+        <tbody>
+          {listings.map((l) => {
+            const r = l.raw || {};
+            const rowPortal = l?.url?.includes("immobiliare") ? "immobiliare.it" : "";
+            const rowAdvertiser = r?.analytics?.agencyName || r?.analytics?.advertiser || "";
+            const noteSnippet = (notesByListing?.[l.id] || "").trim();
+            const assigned = assignByListing?.[l.id] || "";
+
+            return (
+              <tr key={l.id}>
+                <td>{fmtDate(l.first_seen_at)}</td>
+                <td>{fmtDate(r.lastModified * 1000)}</td>
+                <td>
+                  <div style={{ fontWeight: 600 }}>{safe(r.title)}</div>
+                  <div className="muted" style={{ marginTop: 4 }}>
+                    {rowPortal}{" "}
+                    {l.url && (
+                      <>
+                        •{" "}
+                        <a href={l.url} target="_blank" rel="noreferrer">
+                          link
+                        </a>
+                      </>
+                    )}
+                  </div>
+                </td>
+                <td>€ {safe(l.price)}</td>
+                <td>{safe(r.contract?.name)}</td>
+
+                {showAgentColumn && (
+                  <td>
+                    <select
+                      value={assigned}
+                      onChange={(e) => upsertAssignment(l.id, e.target.value)}
+                      style={{ padding: "10px 12px", borderRadius: 12 }}
+                    >
+                      <option value="">—</option>
+                      {agencyAgents.map((a) => (
+                        <option key={a.user_id} value={a.user_id}>
+                          {a.email}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                )}
+
+                <td>{rowAdvertiser}</td>
+                <td>{r?.geography?.street || ""}</td>
+                <td>{r?.analytics?.macrozone || ""}</td>
+                <td>
+                  <div className="note-cell">
+                    {noteSnippet ? noteSnippet : <span className="muted">—</span>}
+                  </div>
+                </td>
+                <td style={{ textAlign: "right" }}>
+                  <button className="btn-sm" onClick={() => openDetails(l)}>
+                    Vedi dettagli
+                  </button>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
 
   return (
     <div>
@@ -385,11 +580,7 @@ export default function App() {
         <div style={{ display: "flex", gap: 12 }}>
           <button onClick={() => setView("dashboard")}>Dashboard</button>
           <button onClick={() => setView("history")}>Le mie ricerche</button>
-
-          {/* TL ONLY */}
-          {isTL && (
-            <button onClick={() => setView("team")}>Gestione agenti</button>
-          )}
+          {isTL && <button onClick={() => setView("team")}>Gestione agenti</button>}
         </div>
       </div>
 
@@ -404,7 +595,7 @@ export default function App() {
         </div>
       )}
 
-      {/* HISTORY (uguale a prima) */}
+      {/* HISTORY */}
       {view === "history" && (
         <div className="card">
           <h3>Le mie ricerche</h3>
@@ -437,83 +628,14 @@ export default function App() {
                 onChange={(e) => setPriceMax(e.target.value)}
               />
               <button onClick={() => loadListingsForRun(selectedRun, true, 0)}>Applica</button>
-              <button
-                onClick={resetFilters}
-                style={{ background: "#e5e7eb", color: "#111" }}
-              >
+              <button onClick={resetFilters} style={{ background: "#e5e7eb", color: "#111" }}>
                 Reset
               </button>
             </div>
           )}
 
-          {/* TABELLA */}
-          <div className="table-wrap">
-            <table className="crm-table">
-              <thead>
-                <tr>
-                  <th>Data acquisizione</th>
-                  <th>Ultimo aggiornamento</th>
-                  <th>Titolo</th>
-                  <th>Prezzo</th>
-                  <th>Contratto</th>
-                  <th>Agenzia / Privato</th>
-                  <th>Via</th>
-                  <th>Zona</th>
-                  <th>Note</th>
-                  <th style={{ textAlign: "right" }}>Azioni</th>
-                </tr>
-              </thead>
-              <tbody>
-                {listings.map((l) => {
-                  const r = l.raw || {};
-                  const rowPortal = l?.url?.includes("immobiliare") ? "immobiliare.it" : "";
-                  const rowAdvertiser =
-                    r?.analytics?.agencyName || r?.analytics?.advertiser || "";
-                  const noteSnippet = (notesByListing?.[l.id] || "").trim();
+          {renderListingsTable({ showAgentColumn: false })}
 
-                  return (
-                    <tr key={l.id}>
-                      <td>{fmtDate(l.first_seen_at)}</td>
-                      <td>{fmtDate(r.lastModified * 1000)}</td>
-                      <td>
-                        <div style={{ fontWeight: 600 }}>{safe(r.title)}</div>
-                        <div className="muted" style={{ marginTop: 4 }}>
-                          {rowPortal}{" "}
-                          {l.url && (
-                            <>
-                              •{" "}
-                              <a href={l.url} target="_blank" rel="noreferrer">
-                                link
-                              </a>
-                            </>
-                          )}
-                        </div>
-                      </td>
-                      <td>€ {safe(l.price)}</td>
-                      <td>{safe(r.contract?.name)}</td>
-                      <td>{rowAdvertiser}</td>
-                      <td>{r?.geography?.street || ""}</td>
-                      <td>{r?.analytics?.macrozone || ""}</td>
-
-                      <td>
-                        <div className="note-cell">
-                          {noteSnippet ? noteSnippet : <span className="muted">—</span>}
-                        </div>
-                      </td>
-
-                      <td style={{ textAlign: "right" }}>
-                        <button className="btn-sm" onClick={() => openDetails(l)}>
-                          Vedi dettagli
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-
-          {/* PAGINAZIONE */}
           {selectedRun && (
             <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
               <button
@@ -544,16 +666,74 @@ export default function App() {
         </div>
       )}
 
-      {/* TEAM (solo TL) - placeholder, NON rompe nulla */}
+      {/* TEAM (solo TL) */}
       {view === "team" && isTL && (
         <div className="card">
           <h3>Gestione agenti</h3>
-          <p className="muted">
-            Step successivo: aggiungiamo colonna “Agente” e assegnazione immobili.
-          </p>
 
-          {/* per ora mostriamo la stessa view delle ricerche */}
-          <p className="muted">Apri “Le mie ricerche” per vedere gli annunci.</p>
+          <select
+            value={selectedRun?.id || ""}
+            onChange={(e) => {
+              const run = runs.find((r) => r.id === e.target.value);
+              if (run) loadListingsForRun(run, true, 0);
+            }}
+          >
+            <option value="">Seleziona…</option>
+            {runs.map((r) => (
+              <option key={r.id} value={r.id}>
+                {new Date(r.created_at).toLocaleString()} – {r.new_listings_count} nuovi
+              </option>
+            ))}
+          </select>
+
+          {selectedRun && (
+            <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
+              <input
+                placeholder="Prezzo min"
+                value={priceMin}
+                onChange={(e) => setPriceMin(e.target.value)}
+              />
+              <input
+                placeholder="Prezzo max"
+                value={priceMax}
+                onChange={(e) => setPriceMax(e.target.value)}
+              />
+              <button onClick={() => loadListingsForRun(selectedRun, true, 0)}>Applica</button>
+              <button onClick={resetFilters} style={{ background: "#e5e7eb", color: "#111" }}>
+                Reset
+              </button>
+            </div>
+          )}
+
+          {renderListingsTable({ showAgentColumn: true })}
+
+          {selectedRun && (
+            <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
+              <button
+                disabled={page === 0}
+                onClick={() => {
+                  const p = page - 1;
+                  setPage(p);
+                  loadListingsForRun(selectedRun, false, p);
+                }}
+              >
+                ← Prev
+              </button>
+              <span className="muted">
+                Pagina {page + 1} / {totalPages}
+              </span>
+              <button
+                disabled={page + 1 >= totalPages}
+                onClick={() => {
+                  const p = page + 1;
+                  setPage(p);
+                  loadListingsForRun(selectedRun, false, p);
+                }}
+              >
+                Next →
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -572,10 +752,7 @@ export default function App() {
                   {fmtDate(dl?.first_seen_at)} • {safe(dr.contract?.name)} • € {safe(dl?.price)}
                 </div>
               </div>
-              <button
-                onClick={closeDetails}
-                style={{ background: "#e5e7eb", color: "#111" }}
-              >
+              <button onClick={closeDetails} style={{ background: "#e5e7eb", color: "#111" }}>
                 Chiudi
               </button>
             </div>
