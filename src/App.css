@@ -64,14 +64,6 @@ button:disabled {
   cursor: not-allowed;
 }
 
-/* Pulsante piccolo (per "Vedi dettagli") */
-.btn-sm {
-  padding: 10px 14px;
-  border-radius: 12px;
-  font-size: 13px;
-  line-height: 1;
-}
-
 /* ===== ACTIONS ===== */
 .actions {
   display: flex;
@@ -180,17 +172,28 @@ button:disabled {
   border-radius: 4px;
 }
 
-/* Note: cella tabella (scroll verticale) */
+/* Note: cella tabella (scroll verticale se lungo) */
 .note-cell {
-  width: 320px;          /* larghezza stabile = meno “salti” */
   max-width: 320px;
-  max-height: 74px;      /* ~3-4 righe */
-  overflow-y: auto;      /* scroll verticale */
+  width: 320px;
+  max-height: 110px;
+  overflow-y: auto;
   overflow-x: hidden;
   white-space: normal;
-  word-break: break-word;
-  padding-right: 6px;    /* spazio per scrollbar */
-  scrollbar-gutter: stable;
+  line-height: 1.35;
+  padding-right: 6px; /* spazio per scrollbar */
+}
+
+/* scrollbar (solo estetica, ok se ignorata) */
+.note-cell::-webkit-scrollbar {
+  width: 8px;
+}
+.note-cell::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 8px;
+}
+.note-cell::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 /* ===================================================== */
@@ -279,4 +282,11 @@ button:disabled {
 .note-textarea:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.15);
+}
+
+/* bottone "Vedi dettagli" più piccolo */
+.btn-sm {
+  padding: 8px 12px;
+  border-radius: 12px;
+  font-size: 13px;
 }
