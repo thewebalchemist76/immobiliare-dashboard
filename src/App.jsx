@@ -19,9 +19,14 @@ export default function App() {
     import.meta.env.VITE_BACKEND_URL || "https://immobiliare-backend.onrender.com";
 
   const [session, setSession] = useState(null);
-  const [agency, setAgency] = useState(null);
-  const [view, setView] = useState("dashboard");
 
+  // agent profile (da tabella agents)
+  const [agentProfile, setAgentProfile] = useState(null); // { role, agency_id, email, user_id }
+
+  // agency (caricata via agentProfile.agency_id)
+  const [agency, setAgency] = useState(null);
+
+  const [view, setView] = useState("dashboard"); // dashboard | history | team
   const [runs, setRuns] = useState([]);
   const [selectedRun, setSelectedRun] = useState(null);
 
@@ -93,33 +98,72 @@ export default function App() {
     clearAuthHash();
   };
 
-  /* ================= AGENCY ================= */
+  /* ================= AGENT PROFILE (agents) ================= */
   useEffect(() => {
-    if (!session) {
+    if (!session?.user?.id) {
+      setAgentProfile(null);
       setAgency(null);
       return;
     }
+
+    supabase
+      .from("agents")
+      .select("email, role, agency_id, user_id")
+      .eq("user_id", session.user.id)
+      .single()
+      .then(({ data, error }) => {
+        if (error) {
+          console.error("load agentProfile:", error.message);
+          setAgentProfile(null);
+          setAgency(null);
+          return;
+        }
+        setAgentProfile(data || null);
+      });
+  }, [session?.user?.id]);
+
+  /* ================= AGENCY (via agents.agency_id) ================= */
+  useEffect(() => {
+    if (!agentProfile?.agency_id) {
+      setAgency(null);
+      return;
+    }
+
     supabase
       .from("agencies")
       .select("*")
-      .eq("user_id", session.user.id)
+      .eq("id", agentProfile.agency_id)
       .single()
-      .then(({ data }) => setAgency(data || null));
-  }, [session]);
+      .then(({ data, error }) => {
+        if (error) {
+          console.error("load agency:", error.message);
+          setAgency(null);
+          return;
+        }
+        setAgency(data || null);
+      });
+  }, [agentProfile?.agency_id]);
 
   /* ================= RUNS ================= */
   const loadRuns = async () => {
     if (!agency?.id) return;
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("agency_runs")
       .select("id, created_at, new_listings_count, total_listings")
       .eq("agency_id", agency.id)
       .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("loadRuns:", error.message);
+      setRuns([]);
+      return;
+    }
     setRuns(data || []);
   };
 
   useEffect(() => {
     if (agency?.id) loadRuns();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agency?.id]);
 
   /* ================= START RUN ================= */
@@ -237,7 +281,14 @@ export default function App() {
     const from = p * PAGE_SIZE;
     const to = from + PAGE_SIZE - 1;
 
-    const { data } = await dataQuery.range(from, to);
+    const { data, error } = await dataQuery.range(from, to);
+
+    if (error) {
+      console.error("loadListingsForRun:", error.message);
+      setListings([]);
+      return;
+    }
+
     const rows = data || [];
     setListings(rows);
 
@@ -298,6 +349,23 @@ export default function App() {
     );
   }
 
+  // se l'utente è autenticato ma non ha profilo agent: messaggio chiaro
+  if (!agentProfile?.agency_id) {
+    return (
+      <div className="card">
+        <h2>Dashboard</h2>
+        <p className="muted">{session.user.email}</p>
+        <p className="muted">
+          Nessun profilo agente associato a questo account. Contatta il Team Leader.
+        </p>
+        <div className="actions">
+          <button onClick={signOut}>Logout</button>
+        </div>
+      </div>
+    );
+  }
+
+  const isTL = agentProfile?.role === "tl";
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
   // Drawer derivati
@@ -317,6 +385,11 @@ export default function App() {
         <div style={{ display: "flex", gap: 12 }}>
           <button onClick={() => setView("dashboard")}>Dashboard</button>
           <button onClick={() => setView("history")}>Le mie ricerche</button>
+
+          {/* TL ONLY */}
+          {isTL && (
+            <button onClick={() => setView("team")}>Gestione agenti</button>
+          )}
         </div>
       </div>
 
@@ -331,7 +404,7 @@ export default function App() {
         </div>
       )}
 
-      {/* HISTORY */}
+      {/* HISTORY (uguale a prima) */}
       {view === "history" && (
         <div className="card">
           <h3>Le mie ricerche</h3>
@@ -394,7 +467,8 @@ export default function App() {
                 {listings.map((l) => {
                   const r = l.raw || {};
                   const rowPortal = l?.url?.includes("immobiliare") ? "immobiliare.it" : "";
-                  const rowAdvertiser = r?.analytics?.agencyName || r?.analytics?.advertiser || "";
+                  const rowAdvertiser =
+                    r?.analytics?.agencyName || r?.analytics?.advertiser || "";
                   const noteSnippet = (notesByListing?.[l.id] || "").trim();
 
                   return (
@@ -421,7 +495,6 @@ export default function App() {
                       <td>{r?.geography?.street || ""}</td>
                       <td>{r?.analytics?.macrozone || ""}</td>
 
-                      {/* FIX: wrapper scrollabile */}
                       <td>
                         <div className="note-cell">
                           {noteSnippet ? noteSnippet : <span className="muted">—</span>}
@@ -468,6 +541,19 @@ export default function App() {
               </button>
             </div>
           )}
+        </div>
+      )}
+
+      {/* TEAM (solo TL) - placeholder, NON rompe nulla */}
+      {view === "team" && isTL && (
+        <div className="card">
+          <h3>Gestione agenti</h3>
+          <p className="muted">
+            Step successivo: aggiungiamo colonna “Agente” e assegnazione immobili.
+          </p>
+
+          {/* per ora mostriamo la stessa view delle ricerche */}
+          <p className="muted">Apri “Le mie ricerche” per vedere gli annunci.</p>
         </div>
       )}
 
