@@ -364,7 +364,10 @@ export default function App() {
                 onChange={(e) => setPriceMax(e.target.value)}
               />
               <button onClick={() => loadListingsForRun(selectedRun, true, 0)}>Applica</button>
-              <button onClick={resetFilters} style={{ background: "#e5e7eb", color: "#111" }}>
+              <button
+                onClick={resetFilters}
+                style={{ background: "#e5e7eb", color: "#111" }}
+              >
                 Reset
               </button>
             </div>
@@ -417,9 +420,14 @@ export default function App() {
                       <td>{rowAdvertiser}</td>
                       <td>{r?.geography?.street || ""}</td>
                       <td>{r?.analytics?.macrozone || ""}</td>
-                      <td className="note-cell">
-                        {noteSnippet ? noteSnippet : <span className="muted">—</span>}
+
+                      {/* FIX: wrapper scrollabile */}
+                      <td>
+                        <div className="note-cell">
+                          {noteSnippet ? noteSnippet : <span className="muted">—</span>}
+                        </div>
                       </td>
+
                       <td style={{ textAlign: "right" }}>
                         <button className="btn-sm" onClick={() => openDetails(l)}>
                           Vedi dettagli
@@ -478,7 +486,10 @@ export default function App() {
                   {fmtDate(dl?.first_seen_at)} • {safe(dr.contract?.name)} • € {safe(dl?.price)}
                 </div>
               </div>
-              <button onClick={closeDetails} style={{ background: "#e5e7eb", color: "#111" }}>
+              <button
+                onClick={closeDetails}
+                style={{ background: "#e5e7eb", color: "#111" }}
+              >
                 Chiudi
               </button>
             </div>
