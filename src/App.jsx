@@ -48,7 +48,6 @@ export default function App() {
   const lastSavedRef = useRef("");
 
   const clearAuthHash = () => {
-    // rimuove #access_token=... e simili senza reload
     if (window.location.hash) {
       history.replaceState(null, "", window.location.pathname + window.location.search);
     }
@@ -74,7 +73,6 @@ export default function App() {
 
   /* ================= AUTH ================= */
   useEffect(() => {
-    // se arrivi da magiclink, togli hash dopo che Supabase ha letto la sessione
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session || null);
       if (data.session) clearAuthHash();
@@ -93,8 +91,6 @@ export default function App() {
     closeDetails();
     await supabase.auth.signOut();
     clearAuthHash();
-    // opzionale: riportati alla home pulita
-    // window.location.assign(window.location.origin);
   };
 
   /* ================= AGENCY ================= */
@@ -247,7 +243,6 @@ export default function App() {
 
     await loadNotesForListingIds(rows.map((x) => x.id));
 
-    // se cambi pagina, chiudi drawer per evitare ambiguità
     if (detailsOpen && detailsListing?.id) {
       const still = rows.find((x) => x.id === detailsListing.id);
       if (!still) closeDetails();
@@ -280,7 +275,7 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [noteDraft, detailsOpen, detailsListing?.id]);
 
-  /* ================= LOGIN (prima era nullo) ================= */
+  /* ================= LOGIN ================= */
   if (!session) {
     return (
       <div className="card">
@@ -369,10 +364,7 @@ export default function App() {
                 onChange={(e) => setPriceMax(e.target.value)}
               />
               <button onClick={() => loadListingsForRun(selectedRun, true, 0)}>Applica</button>
-              <button
-                onClick={resetFilters}
-                style={{ background: "#e5e7eb", color: "#111" }}
-              >
+              <button onClick={resetFilters} style={{ background: "#e5e7eb", color: "#111" }}>
                 Reset
               </button>
             </div>
@@ -401,6 +393,7 @@ export default function App() {
                   const rowPortal = l?.url?.includes("immobiliare") ? "immobiliare.it" : "";
                   const rowAdvertiser = r?.analytics?.agencyName || r?.analytics?.advertiser || "";
                   const noteSnippet = (notesByListing?.[l.id] || "").trim();
+
                   return (
                     <tr key={l.id}>
                       <td>{fmtDate(l.first_seen_at)}</td>
@@ -428,7 +421,9 @@ export default function App() {
                         {noteSnippet ? noteSnippet : <span className="muted">—</span>}
                       </td>
                       <td style={{ textAlign: "right" }}>
-                        <button onClick={() => openDetails(l)}>Vedi dettagli</button>
+                        <button className="btn-sm" onClick={() => openDetails(l)}>
+                          Vedi dettagli
+                        </button>
                       </td>
                     </tr>
                   );
@@ -483,10 +478,7 @@ export default function App() {
                   {fmtDate(dl?.first_seen_at)} • {safe(dr.contract?.name)} • € {safe(dl?.price)}
                 </div>
               </div>
-              <button
-                onClick={closeDetails}
-                style={{ background: "#e5e7eb", color: "#111" }}
-              >
+              <button onClick={closeDetails} style={{ background: "#e5e7eb", color: "#111" }}>
                 Chiudi
               </button>
             </div>
@@ -521,7 +513,7 @@ export default function App() {
               </div>
 
               <div className="kv">
-                <div className="kv-label">Note (solo questo è modificabile)</div>
+                <div className="kv-label">Note</div>
                 <textarea
                   className="note-textarea"
                   rows={6}
