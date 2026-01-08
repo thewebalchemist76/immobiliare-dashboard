@@ -94,11 +94,12 @@ export default function App() {
   const [agentFilter, setAgentFilter] = useState(""); // agent_user_id
   const [advertiserFilter, setAdvertiserFilter] = useState(""); // label "Agenzia: X" / "Privato: Y"
 
-  // cache run (tutti i listing del run dopo filtri SQL base), per dropdown
+  // cache run: tutti i listing (dopo filtri SQL base), per dropdown
   const [allRunListings, setAllRunListings] = useState([]);
-
-  // cache assignments per tutti i listing del run (serve ai filtri agente)
-  const [assignMapAll, setAssignMapAll] = useState({}); // { [listing_id]: agent_user_id }
+  // cache assignments di tutti i listing del run
+  const [assignMapAll, setAssignMapAll] = useState({});
+  // cache: listing del run DOPO filtri client (questa è la chiave per far funzionare tutto)
+  const [filteredRunListings, setFilteredRunListings] = useState([]);
 
   const clearAuthHash = () => {
     if (window.location.hash) {
@@ -371,7 +372,7 @@ export default function App() {
     await loadNotesForListingIds(listings.map((x) => x.id));
   };
 
-  /* ================= AGENCY AGENTS (sempre: serve mapping email) ================= */
+  /* ================= AGENCY AGENTS ================= */
   const loadAgencyAgents = async () => {
     if (!agency?.id) {
       setAgencyAgents([]);
@@ -431,11 +432,8 @@ export default function App() {
     const advertiser = (a?.advertiser || "").toLowerCase(); // "agenzia" / "privato"
     const agencyName = a?.agencyName || r?.contacts?.agencyName || "";
 
-    if (advertiser === "agenzia") {
-      return `Agenzia: ${agencyName || "Agenzia"}`;
-    }
+    if (advertiser === "agenzia") return `Agenzia: ${agencyName || "Agenzia"}`;
 
-    // Privato: spesso non c’è un nome -> "Inserzionista privato"
     const privName =
       a?.advertiserName || a?.privateName || a?.ownerName || "Inserzionista privato";
     return `Privato: ${privName}`;
@@ -535,11 +533,30 @@ export default function App() {
     setAssignByListing((prev) => ({ ...prev, [listingId]: agentUserId }));
   };
 
-  /* ================= LOAD LISTINGS (con filtri + pagination client) ================= */
+  const paginateFromFiltered = async (filtered, pageToUse) => {
+    const from = pageToUse * PAGE_SIZE;
+    const to = from + PAGE_SIZE;
+    const pageRows = filtered.slice(from, to);
+
+    setListings(pageRows);
+    setTotalCount(filtered.length);
+
+    const pageIds = pageRows.map((x) => x.id);
+    await loadAssignmentsForListingIds(pageIds);
+    await loadNotesForListingIds(pageIds);
+
+    if (detailsOpen && detailsListing?.id) {
+      const still = pageRows.find((x) => x.id === detailsListing.id);
+      if (!still) closeDetails();
+    }
+  };
+
+  /* ================= LOAD LISTINGS (carica run + calcola filteredRunListings) ================= */
   const loadListingsForRun = async (run, resetPage = true, pageOverride = null) => {
     if (!run) return;
 
     setSelectedRun(run);
+    const targetPage = pageOverride ?? (resetPage ? 0 : page);
     if (resetPage) setPage(0);
 
     const { data: links, error: linksErr } = await supabase
@@ -551,6 +568,7 @@ export default function App() {
       setListings([]);
       setAllRunListings([]);
       setAssignMapAll({});
+      setFilteredRunListings([]);
       setTotalCount(0);
       setNotesByListing({});
       setNotesMetaByListing({});
@@ -560,7 +578,7 @@ export default function App() {
 
     const ids = links.map((l) => l.listing_id);
 
-    // 1) base query (filtri SQL possibili: price + first_seen_at)
+    // 1) base query (SQL filters: price + first_seen_at)
     let q = supabase
       .from("listings")
       .select("id, price, url, raw, first_seen_at")
@@ -581,6 +599,7 @@ export default function App() {
       setListings([]);
       setAllRunListings([]);
       setAssignMapAll({});
+      setFilteredRunListings([]);
       setTotalCount(0);
       return;
     }
@@ -588,7 +607,7 @@ export default function App() {
     const rows = data || [];
     setAllRunListings(rows);
 
-    // 2) assignments di TUTTI i listing del run (serve ai filtri)
+    // 2) assignments di TUTTI i listing del run (per filtro agente)
     const mapAll = await (async () => {
       if (!agency?.id || !rows.length) return {};
       const { data: aData, error: aErr } = await supabase
@@ -614,41 +633,23 @@ export default function App() {
 
     setAssignMapAll(mapAll);
 
-    // 3) filtri client (contract + advertiser + agent)
+    // 3) filtri client
     let filtered = rows;
 
     if (contractFilter) {
       filtered = filtered.filter((l) => (getContractName(l) || "") === contractFilter);
     }
-
     if (advertiserFilter) {
       filtered = filtered.filter((l) => (getAdvertiserLabel(l) || "") === advertiserFilter);
     }
-
     if (agentFilter) {
       filtered = filtered.filter((l) => (mapAll[l.id] || "") === agentFilter);
     }
 
-    setTotalCount(filtered.length);
+    setFilteredRunListings(filtered);
 
-    // 4) paginate client
-    const p = pageOverride ?? (resetPage ? 0 : page);
-    const from = p * PAGE_SIZE;
-    const to = from + PAGE_SIZE;
-    const pageRows = filtered.slice(from, to);
-
-    setListings(pageRows);
-
-    // 5) assignments + notes solo pagina
-    const pageListingIds = pageRows.map((x) => x.id);
-
-    await loadAssignmentsForListingIds(pageListingIds);
-    await loadNotesForListingIds(pageListingIds);
-
-    if (detailsOpen && detailsListing?.id) {
-      const still = pageRows.find((x) => x.id === detailsListing.id);
-      if (!still) closeDetails();
-    }
+    // 4) paginazione basata SU filtered (sempre)
+    await paginateFromFiltered(filtered, targetPage);
   };
 
   const applyFilters = () => {
@@ -786,16 +787,12 @@ export default function App() {
 
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
-  // Drawer derivati
   const dl = detailsListing;
   const dr = dl?.raw || {};
   const portal = dl?.url?.includes("immobiliare") ? "immobiliare.it" : "";
   const drawerAdvertiser = (dr?.analytics?.agencyName || dr?.analytics?.advertiser || "").toString();
   const firstImg = dr?.media?.images?.[0]?.hd || dr?.media?.images?.[0]?.sd || "";
 
-  // showAgentColumn:
-  // - history: true (read-only)
-  // - team: true (editable, TL only)
   const renderListingsTable = ({ showAgentColumn, agentEditable }) => (
     <div className="table-wrap">
       <table className="crm-table">
@@ -1024,7 +1021,7 @@ export default function App() {
                 onClick={() => {
                   const p = page - 1;
                   setPage(p);
-                  loadListingsForRun(selectedRun, false, p);
+                  paginateFromFiltered(filteredRunListings, p);
                 }}
               >
                 ← Prev
@@ -1037,7 +1034,7 @@ export default function App() {
                 onClick={() => {
                   const p = page + 1;
                   setPage(p);
-                  loadListingsForRun(selectedRun, false, p);
+                  paginateFromFiltered(filteredRunListings, p);
                 }}
               >
                 Next →
@@ -1078,7 +1075,7 @@ export default function App() {
                 onClick={() => {
                   const p = page - 1;
                   setPage(p);
-                  loadListingsForRun(selectedRun, false, p);
+                  paginateFromFiltered(filteredRunListings, p);
                 }}
               >
                 ← Prev
@@ -1091,7 +1088,7 @@ export default function App() {
                 onClick={() => {
                   const p = page + 1;
                   setPage(p);
-                  loadListingsForRun(selectedRun, false, p);
+                  paginateFromFiltered(filteredRunListings, p);
                 }}
               >
                 Next →
