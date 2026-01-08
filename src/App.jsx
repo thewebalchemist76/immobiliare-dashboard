@@ -919,7 +919,7 @@ export default function App() {
                 <select
                   value={advertiserFilter}
                   onChange={(e) => setAdvertiserFilter(e.target.value)}
-                >
+                > </br>
                   <option value="">Agenzia/Privato (tutti)</option>
                   {advertiserOptions.map((n) => (
                     <option key={n} value={n}>
