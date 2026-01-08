@@ -14,54 +14,21 @@ const fmtDate = (d) => {
 
 const safe = (v, fallback = "") => (v === null || v === undefined ? fallback : v);
 
-const startOfDayISO = (yyyyMmDd) => {
-  // yyyy-mm-dd
-  if (!yyyyMmDd) return null;
-  const [y, m, d] = yyyyMmDd.split("-").map((x) => Number(x));
+const toISOStartOfDayUTC = (yyyy_mm_dd) => {
+  if (!yyyy_mm_dd) return null;
+  // treat as local date, but send as ISO at 00:00:00Z to be consistent
+  const [y, m, d] = yyyy_mm_dd.split("-").map((x) => parseInt(x, 10));
   if (!y || !m || !d) return null;
-  const dt = new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0));
+  const dt = new Date(Date.UTC(y, m - 1, d, 0, 0, 0));
   return dt.toISOString();
 };
 
-const endOfDayISO = (yyyyMmDd) => {
-  if (!yyyyMmDd) return null;
-  const [y, m, d] = yyyyMmDd.split("-").map((x) => Number(x));
+const toISOStartOfNextDayUTC = (yyyy_mm_dd) => {
+  if (!yyyy_mm_dd) return null;
+  const [y, m, d] = yyyy_mm_dd.split("-").map((x) => parseInt(x, 10));
   if (!y || !m || !d) return null;
-  const dt = new Date(Date.UTC(y, m - 1, d, 23, 59, 59, 999));
+  const dt = new Date(Date.UTC(y, m - 1, d + 1, 0, 0, 0));
   return dt.toISOString();
-};
-
-const getContractName = (listing) => {
-  const r = listing?.raw || {};
-  return (r?.contract?.name || "").trim();
-};
-
-const getAdvertiserType = (listing) => {
-  const adv = (listing?.raw?.analytics?.advertiser || "").toLowerCase();
-  // su immobiliare di solito: "agenzia" vs altro
-  return adv === "agenzia" ? "Agenzia" : "Privato";
-};
-
-const getAdvertiserName = (listing) => {
-  const r = listing?.raw || {};
-  const type = getAdvertiserType(listing);
-  if (type === "Agenzia") {
-    return (r?.analytics?.agencyName || r?.analytics?.agency || r?.analytics?.agency_name || "").trim();
-  }
-  // privato spesso non ha nome: fallback
-  const maybe =
-    (r?.analytics?.advertiserName ||
-      r?.analytics?.privateName ||
-      r?.contacts?.name ||
-      r?.contacts?.contactName ||
-      "").trim();
-  return maybe || "Inserzionista privato";
-};
-
-const getAdvertiserLabel = (listing) => {
-  const type = getAdvertiserType(listing);
-  const name = getAdvertiserName(listing);
-  return `${type}: ${name || (type === "Privato" ? "Inserzionista privato" : "")}`.trim();
 };
 
 export default function App() {
@@ -83,7 +50,10 @@ export default function App() {
   const [runs, setRuns] = useState([]);
   const [selectedRun, setSelectedRun] = useState(null);
 
+  // LISTINGS current page
   const [listings, setListings] = useState([]);
+
+  // Pagination
   const [page, setPage] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
 
@@ -106,20 +76,8 @@ export default function App() {
 
   // AGENTS mapping + dropdown TL
   const [agencyAgents, setAgencyAgents] = useState([]); // [{user_id,email,role}]
-  // ASSIGNMENTS visibili per listing (carichiamo per tutti quelli mostrati)
+  // ASSIGNMENTS visibili per listing nella pagina corrente
   const [assignByListing, setAssignByListing] = useState({}); // { [listing_id]: agent_user_id }
-
-  // ===== FILTRI (history + team) =====
-  const [acqDateFrom, setAcqDateFrom] = useState(""); // yyyy-mm-dd
-  const [acqDateTo, setAcqDateTo] = useState(""); // yyyy-mm-dd
-  const [priceMin, setPriceMin] = useState("");
-  const [priceMax, setPriceMax] = useState("");
-  const [contractFilter, setContractFilter] = useState(""); // contract name
-  const [agentFilter, setAgentFilter] = useState(""); // agent_user_id (uuid)
-  const [advertiserFilter, setAdvertiserFilter] = useState(""); // "Agenzia: X" / "Privato: Y"
-
-  // cache listing per run (per avere filtri corretti + pagination stabile)
-  const [allRunListings, setAllRunListings] = useState([]); // tutti i listings del run (già joinati)
 
   // ===== TAB "AGENTI" (INVITI) =====
   const [inviteFirstName, setInviteFirstName] = useState("");
@@ -127,6 +85,18 @@ export default function App() {
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteLoading, setInviteLoading] = useState(false);
   const [inviteMsg, setInviteMsg] = useState("");
+
+  // ===== FILTRI (draft + apply) =====
+  const [acqFrom, setAcqFrom] = useState(""); // yyyy-mm-dd
+  const [acqTo, setAcqTo] = useState(""); // yyyy-mm-dd
+  const [priceMin, setPriceMin] = useState("");
+  const [priceMax, setPriceMax] = useState("");
+  const [contractFilter, setContractFilter] = useState(""); // contract name
+  const [agentFilter, setAgentFilter] = useState(""); // agent_user_id
+  const [advertiserFilter, setAdvertiserFilter] = useState(""); // label "Agenzia: X" / "Privato: Y"
+
+  // cache run (tutti i listing del run dopo filtri SQL base), per dropdown
+  const [allRunListings, setAllRunListings] = useState([]);
 
   const clearAuthHash = () => {
     if (window.location.hash) {
@@ -396,7 +366,6 @@ export default function App() {
       return;
     }
 
-    // ricarica note solo per quelli visibili
     await loadNotesForListingIds(listings.map((x) => x.id));
   };
 
@@ -437,17 +406,75 @@ export default function App() {
   }, [agency?.id]);
 
   const agentEmailByUserId = useMemo(() => {
-    return agencyAgents.reduce((acc, a) => {
+    return (agencyAgents || []).reduce((acc, a) => {
       acc[a.user_id] = a.email;
       return acc;
     }, {});
   }, [agencyAgents]);
 
-  /* ================= ASSIGNMENTS ================= */
+  /* ================= HELPERS: contract + advertiser label ================= */
+  const getContractName = (l) => {
+    const r = l?.raw || {};
+    return (
+      r?.contract?.name ||
+      r?.analytics?.contract ||
+      (r?.contract?.id === 1 ? "Vendita" : "") ||
+      ""
+    );
+  };
+
+  const getAdvertiserLabel = (l) => {
+    const r = l?.raw || {};
+    const a = r?.analytics || {};
+    const advertiser = (a?.advertiser || "").toLowerCase(); // "agenzia" / "privato"
+    const agencyName =
+      a?.agencyName ||
+      r?.analytics?.agencyName ||
+      r?.contacts?.agencyName ||
+      "";
+
+    if (advertiser === "agenzia") {
+      return `Agenzia: ${agencyName || "Agenzia"}`;
+    }
+
+    // Privato: spesso non c’è un nome -> "Inserzionista privato"
+    const privName =
+      a?.advertiserName ||
+      a?.privateName ||
+      a?.ownerName ||
+      "Inserzionista privato";
+    return `Privato: ${privName}`;
+  };
+
+  const contractOptions = useMemo(() => {
+    const set = new Set();
+    (allRunListings || []).forEach((l) => {
+      const c = (getContractName(l) || "").trim();
+      if (c) set.add(c);
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allRunListings]);
+
+  const advertiserOptions = useMemo(() => {
+    const set = new Set();
+    (allRunListings || []).forEach((l) => {
+      const v = (getAdvertiserLabel(l) || "").trim();
+      if (v) set.add(v);
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allRunListings]);
+
+  /* ================= ASSIGNMENTS (sempre SELECT, solo TL modifica) ================= */
   const loadAssignmentsForListingIds = async (listingIds) => {
-    if (!agency?.id || !listingIds?.length) {
+    if (!agency?.id) {
       setAssignByListing({});
-      return;
+      return {};
+    }
+    if (!listingIds?.length) {
+      setAssignByListing({});
+      return {};
     }
 
     const { data, error } = await supabase
@@ -459,14 +486,17 @@ export default function App() {
     if (error) {
       console.error("loadAssignmentsForListingIds:", error.message);
       setAssignByListing({});
-      return;
+      return {};
     }
 
     const map = {};
     (data || []).forEach((r) => {
       map[r.listing_id] = r.agent_user_id;
     });
+
+    // NB: qui settiamo la pagina corrente, ma ritorniamo anche la mappa per filtri
     setAssignByListing(map);
+    return map;
   };
 
   const upsertAssignment = async (listingId, agentUserId) => {
@@ -511,22 +541,21 @@ export default function App() {
     setAssignByListing((prev) => ({ ...prev, [listingId]: agentUserId }));
   };
 
-  /* ================= LOAD LISTINGS (run -> all listings) ================= */
+  /* ================= LOAD LISTINGS (con filtri + pagination client) ================= */
   const loadListingsForRun = async (run, resetPage = true, pageOverride = null) => {
     if (!run) return;
 
     setSelectedRun(run);
     if (resetPage) setPage(0);
 
-    // 1) link table: prendo listing_id del run
     const { data: links, error: linksErr } = await supabase
       .from("agency_run_listings")
       .select("listing_id")
       .eq("run_id", run.id);
 
     if (linksErr || !links?.length) {
-      setAllRunListings([]);
       setListings([]);
+      setAllRunListings([]);
       setTotalCount(0);
       setNotesByListing({});
       setNotesMetaByListing({});
@@ -536,27 +565,26 @@ export default function App() {
 
     const ids = links.map((l) => l.listing_id);
 
-    // 2) carico tutti i listings del run (max_items è 50 -> ok)
+    // 1) base query (filtri SQL possibili: price + first_seen_at)
     let q = supabase
       .from("listings")
       .select("id, price, url, raw, first_seen_at")
       .in("id", ids)
       .order("price", { ascending: true });
 
-    // filtri DB che hanno colonne vere
-    const isoFrom = startOfDayISO(acqDateFrom);
-    const isoTo = endOfDayISO(acqDateTo);
-    if (isoFrom) q = q.gte("first_seen_at", isoFrom);
-    if (isoTo) q = q.lte("first_seen_at", isoTo);
     if (priceMin) q = q.gte("price", Number(priceMin));
     if (priceMax) q = q.lte("price", Number(priceMax));
 
-    const { data, error } = await q;
+    const fromISO = toISOStartOfDayUTC(acqFrom);
+    const toNextISO = toISOStartOfNextDayUTC(acqTo);
+    if (fromISO) q = q.gte("first_seen_at", fromISO);
+    if (toNextISO) q = q.lt("first_seen_at", toNextISO);
 
+    const { data, error } = await q;
     if (error) {
       console.error("loadListingsForRun:", error.message);
-      setAllRunListings([]);
       setListings([]);
+      setAllRunListings([]);
       setTotalCount(0);
       return;
     }
@@ -564,63 +592,58 @@ export default function App() {
     const rows = data || [];
     setAllRunListings(rows);
 
-    // applico filtri “derivati” (contract, agent, advertiser) + paginazione
-    const filtered = applyClientFilters(rows);
+    // 2) assignments per tutti (serve anche per filtro agente)
+    const assignMapAll = await (async () => {
+      if (!agency?.id) return {};
+      const { data: aData, error: aErr } = await supabase
+        .from("listing_assignments")
+        .select("listing_id, agent_user_id")
+        .eq("agency_id", agency.id)
+        .in("listing_id", rows.map((x) => x.id));
 
-    setTotalCount(filtered.length);
+      if (aErr) {
+        console.error("loadAssignments(all):", aErr.message);
+        return {};
+      }
 
-    const p = pageOverride ?? (resetPage ? 0 : page);
-    const fromIdx = p * PAGE_SIZE;
-    const pageRows = filtered.slice(fromIdx, fromIdx + PAGE_SIZE);
+      const m = {};
+      (aData || []).forEach((r) => {
+        m[r.listing_id] = r.agent_user_id;
+      });
+      return m;
+    })();
 
-    setListings(pageRows);
-
-    const pageIds = pageRows.map((x) => x.id);
-    await loadNotesForListingIds(pageIds);
-    await loadAssignmentsForListingIds(pageIds);
-
-    if (detailsOpen && detailsListing?.id) {
-      const still = pageRows.find((x) => x.id === detailsListing.id);
-      if (!still) closeDetails();
-    }
-  };
-
-  const applyClientFilters = (rows) => {
-    let out = rows || [];
+    // 3) filtri client (contract + advertiser + agent)
+    let filtered = rows;
 
     if (contractFilter) {
-      out = out.filter((l) => getContractName(l) === contractFilter);
+      filtered = filtered.filter((l) => (getContractName(l) || "") === contractFilter);
     }
 
     if (advertiserFilter) {
-      out = out.filter((l) => getAdvertiserLabel(l) === advertiserFilter);
+      filtered = filtered.filter((l) => (getAdvertiserLabel(l) || "") === advertiserFilter);
     }
 
     if (agentFilter) {
-      out = out.filter((l) => {
-        const assigned = assignByListing?.[l.id] || "";
-        return assigned === agentFilter;
-      });
+      filtered = filtered.filter((l) => (assignMapAll[l.id] || "") === agentFilter);
     }
 
-    return out;
-  };
-
-  // quando cambiano assegnazioni o filtri “client”, ricalcolo pagina corrente
-  const refreshPageFromCache = (pageOverride = null) => {
-    const base = allRunListings || [];
-    const filtered = applyClientFilters(base);
     setTotalCount(filtered.length);
 
-    const p = pageOverride ?? page;
-    const fromIdx = p * PAGE_SIZE;
-    const pageRows = filtered.slice(fromIdx, fromIdx + PAGE_SIZE);
+    // 4) paginate client
+    const p = pageOverride ?? (resetPage ? 0 : page);
+    const from = p * PAGE_SIZE;
+    const to = from + PAGE_SIZE;
+    const pageRows = filtered.slice(from, to);
 
     setListings(pageRows);
 
-    const pageIds = pageRows.map((x) => x.id);
-    loadNotesForListingIds(pageIds);
-    loadAssignmentsForListingIds(pageIds);
+    // 5) assignments + notes solo pagina
+    const pageListingIds = pageRows.map((x) => x.id);
+
+    // assignments pagina (così tabella mostra subito agenti)
+    await loadAssignmentsForListingIds(pageListingIds);
+    await loadNotesForListingIds(pageListingIds);
 
     if (detailsOpen && detailsListing?.id) {
       const still = pageRows.find((x) => x.id === detailsListing.id);
@@ -628,18 +651,19 @@ export default function App() {
     }
   };
 
+  const applyFilters = () => {
+    if (!selectedRun) return;
+    loadListingsForRun(selectedRun, true, 0);
+  };
+
   const resetFilters = () => {
-    setAcqDateFrom("");
-    setAcqDateTo("");
+    setAcqFrom("");
+    setAcqTo("");
     setPriceMin("");
     setPriceMax("");
     setContractFilter("");
     setAgentFilter("");
     setAdvertiserFilter("");
-    if (selectedRun) loadListingsForRun(selectedRun, true, 0);
-  };
-
-  const applyFilters = () => {
     if (selectedRun) loadListingsForRun(selectedRun, true, 0);
   };
 
@@ -663,13 +687,6 @@ export default function App() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [noteDraft, detailsOpen, detailsListing?.id, noteReadOnly]);
-
-  // se cambiano filtri “client-side”, aggiorna pagina da cache (senza rifare query DB)
-  useEffect(() => {
-    if (!selectedRun) return;
-    refreshPageFromCache(0);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [contractFilter, advertiserFilter, agentFilter, assignByListing]);
 
   /* ================= TAB AGENTI: INVITA ================= */
   const inviteAgent = async () => {
@@ -773,27 +790,8 @@ export default function App() {
   const dl = detailsListing;
   const dr = dl?.raw || {};
   const portal = dl?.url?.includes("immobiliare") ? "immobiliare.it" : "";
-  const drawerAdvertiser = getAdvertiserLabel(dl);
+  const drawerAdvertiser = (dr?.analytics?.agencyName || dr?.analytics?.advertiser || "").toString();
   const firstImg = dr?.media?.images?.[0]?.hd || dr?.media?.images?.[0]?.sd || "";
-
-  // dropdown options (da cache)
-  const contractOptions = useMemo(() => {
-    const set = new Set();
-    (allRunListings || []).forEach((l) => {
-      const c = getContractName(l);
-      if (c) set.add(c);
-    });
-    return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [allRunListings]);
-
-  const advertiserOptions = useMemo(() => {
-    const set = new Set();
-    (allRunListings || []).forEach((l) => {
-      const v = getAdvertiserLabel(l);
-      if (v) set.add(v);
-    });
-    return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [allRunListings]);
 
   // showAgentColumn:
   // - history: true (read-only)
@@ -820,6 +818,8 @@ export default function App() {
           {listings.map((l) => {
             const r = l.raw || {};
             const rowPortal = l?.url?.includes("immobiliare") ? "immobiliare.it" : "";
+            const contractName = getContractName(l);
+            const advLabel = getAdvertiserLabel(l);
             const noteSnippet = (notesByListing?.[l.id] || "").trim();
 
             const assignedUserId = assignByListing?.[l.id] || "";
@@ -844,7 +844,7 @@ export default function App() {
                   </div>
                 </td>
                 <td>€ {safe(l.price)}</td>
-                <td>{safe(r.contract?.name)}</td>
+                <td>{safe(contractName)}</td>
 
                 {showAgentColumn && (
                   <td>
@@ -869,7 +869,7 @@ export default function App() {
                   </td>
                 )}
 
-                <td>{getAdvertiserLabel(l) || "—"}</td>
+                <td>{advLabel}</td>
                 <td>{r?.geography?.street || ""}</td>
                 <td>{r?.analytics?.macrozone || ""}</td>
                 <td>
@@ -887,6 +887,81 @@ export default function App() {
           })}
         </tbody>
       </table>
+    </div>
+  );
+
+  const FiltersBar = () => (
+    <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "end" }}>
+      <div style={{ display: "grid", gap: 6 }}>
+        <div className="muted" style={{ fontWeight: 600 }}>
+          Data acquisizione da
+        </div>
+        <input type="date" value={acqFrom} onChange={(e) => setAcqFrom(e.target.value)} />
+      </div>
+
+      <div style={{ display: "grid", gap: 6 }}>
+        <div className="muted" style={{ fontWeight: 600 }}>
+          Data acquisizione a
+        </div>
+        <input type="date" value={acqTo} onChange={(e) => setAcqTo(e.target.value)} />
+      </div>
+
+      <input
+        placeholder="Prezzo min"
+        value={priceMin}
+        onChange={(e) => setPriceMin(e.target.value)}
+        style={{ minWidth: 160 }}
+      />
+      <input
+        placeholder="Prezzo max"
+        value={priceMax}
+        onChange={(e) => setPriceMax(e.target.value)}
+        style={{ minWidth: 160 }}
+      />
+
+      <select
+        value={contractFilter}
+        onChange={(e) => setContractFilter(e.target.value)}
+        style={{ minWidth: 220, padding: "10px 12px", borderRadius: 12 }}
+      >
+        <option value="">Contratto (tutti)</option>
+        {contractOptions.map((c) => (
+          <option key={c} value={c}>
+            {c}
+          </option>
+        ))}
+      </select>
+
+      <select
+        value={agentFilter}
+        onChange={(e) => setAgentFilter(e.target.value)}
+        style={{ minWidth: 260, padding: "10px 12px", borderRadius: 12 }}
+      >
+        <option value="">Agente (tutti)</option>
+        {agencyAgents.map((a) => (
+          <option key={a.user_id} value={a.user_id}>
+            {a.email}
+          </option>
+        ))}
+      </select>
+
+      <select
+        value={advertiserFilter}
+        onChange={(e) => setAdvertiserFilter(e.target.value)}
+        style={{ minWidth: 280, padding: "10px 12px", borderRadius: 12 }}
+      >
+        <option value="">Agenzia/Privato (tutti)</option>
+        {advertiserOptions.map((v) => (
+          <option key={v} value={v}>
+            {v}
+          </option>
+        ))}
+      </select>
+
+      <button onClick={applyFilters}>Applica</button>
+      <button onClick={resetFilters} style={{ background: "#e5e7eb", color: "#111" }}>
+        Reset
+      </button>
     </div>
   );
 
@@ -925,10 +1000,7 @@ export default function App() {
             value={selectedRun?.id || ""}
             onChange={(e) => {
               const run = runs.find((r) => r.id === e.target.value);
-              if (run) {
-                setPage(0);
-                loadListingsForRun(run, true, 0);
-              }
+              if (run) loadListingsForRun(run, true, 0);
             }}
           >
             <option value="">Seleziona…</option>
@@ -939,73 +1011,7 @@ export default function App() {
             ))}
           </select>
 
-          {selectedRun && (
-            <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <div style={{ display: "grid", gap: 6 }}>
-                <div className="muted">Data acquisizione da</div>
-                <input
-                  type="date"
-                  value={acqDateFrom}
-                  onChange={(e) => setAcqDateFrom(e.target.value)}
-                />
-              </div>
-
-              <div style={{ display: "grid", gap: 6 }}>
-                <div className="muted">Data acquisizione a</div>
-                <input
-                  type="date"
-                  value={acqDateTo}
-                  onChange={(e) => setAcqDateTo(e.target.value)}
-                />
-              </div>
-
-              <input
-                placeholder="Prezzo min"
-                value={priceMin}
-                onChange={(e) => setPriceMin(e.target.value)}
-              />
-              <input
-                placeholder="Prezzo max"
-                value={priceMax}
-                onChange={(e) => setPriceMax(e.target.value)}
-              />
-
-              <select value={contractFilter} onChange={(e) => setContractFilter(e.target.value)}>
-                <option value="">Contratto (tutti)</option>
-                {contractOptions.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-
-              <select value={agentFilter} onChange={(e) => setAgentFilter(e.target.value)}>
-                <option value="">Agente (tutti)</option>
-                {agencyAgents.map((a) => (
-                  <option key={a.user_id} value={a.user_id}>
-                    {a.email}
-                  </option>
-                ))}
-              </select>
-
-              <select
-                value={advertiserFilter}
-                onChange={(e) => setAdvertiserFilter(e.target.value)}
-              >
-                <option value="">Agenzia/Privato (tutti)</option>
-                {advertiserOptions.map((v) => (
-                  <option key={v} value={v}>
-                    {v}
-                  </option>
-                ))}
-              </select>
-
-              <button onClick={applyFilters}>Applica</button>
-              <button onClick={resetFilters} style={{ background: "#e5e7eb", color: "#111" }}>
-                Reset
-              </button>
-            </div>
-          )}
+          {selectedRun && <FiltersBar />}
 
           {renderListingsTable({ showAgentColumn: true, agentEditable: false })}
 
@@ -1014,9 +1020,9 @@ export default function App() {
               <button
                 disabled={page === 0}
                 onClick={() => {
-                  const p = Math.max(0, page - 1);
+                  const p = page - 1;
                   setPage(p);
-                  refreshPageFromCache(p);
+                  loadListingsForRun(selectedRun, false, p);
                 }}
               >
                 ← Prev
@@ -1029,7 +1035,7 @@ export default function App() {
                 onClick={() => {
                   const p = page + 1;
                   setPage(p);
-                  refreshPageFromCache(p);
+                  loadListingsForRun(selectedRun, false, p);
                 }}
               >
                 Next →
@@ -1048,10 +1054,7 @@ export default function App() {
             value={selectedRun?.id || ""}
             onChange={(e) => {
               const run = runs.find((r) => r.id === e.target.value);
-              if (run) {
-                setPage(0);
-                loadListingsForRun(run, true, 0);
-              }
+              if (run) loadListingsForRun(run, true, 0);
             }}
           >
             <option value="">Seleziona…</option>
@@ -1062,73 +1065,7 @@ export default function App() {
             ))}
           </select>
 
-          {selectedRun && (
-            <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <div style={{ display: "grid", gap: 6 }}>
-                <div className="muted">Data acquisizione da</div>
-                <input
-                  type="date"
-                  value={acqDateFrom}
-                  onChange={(e) => setAcqDateFrom(e.target.value)}
-                />
-              </div>
-
-              <div style={{ display: "grid", gap: 6 }}>
-                <div className="muted">Data acquisizione a</div>
-                <input
-                  type="date"
-                  value={acqDateTo}
-                  onChange={(e) => setAcqDateTo(e.target.value)}
-                />
-              </div>
-
-              <input
-                placeholder="Prezzo min"
-                value={priceMin}
-                onChange={(e) => setPriceMin(e.target.value)}
-              />
-              <input
-                placeholder="Prezzo max"
-                value={priceMax}
-                onChange={(e) => setPriceMax(e.target.value)}
-              />
-
-              <select value={contractFilter} onChange={(e) => setContractFilter(e.target.value)}>
-                <option value="">Contratto (tutti)</option>
-                {contractOptions.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-
-              <select value={agentFilter} onChange={(e) => setAgentFilter(e.target.value)}>
-                <option value="">Agente (tutti)</option>
-                {agencyAgents.map((a) => (
-                  <option key={a.user_id} value={a.user_id}>
-                    {a.email}
-                  </option>
-                ))}
-              </select>
-
-              <select
-                value={advertiserFilter}
-                onChange={(e) => setAdvertiserFilter(e.target.value)}
-              >
-                <option value="">Agenzia/Privato (tutti)</option>
-                {advertiserOptions.map((v) => (
-                  <option key={v} value={v}>
-                    {v}
-                  </option>
-                ))}
-              </select>
-
-              <button onClick={applyFilters}>Applica</button>
-              <button onClick={resetFilters} style={{ background: "#e5e7eb", color: "#111" }}>
-                Reset
-              </button>
-            </div>
-          )}
+          {selectedRun && <FiltersBar />}
 
           {renderListingsTable({ showAgentColumn: true, agentEditable: true })}
 
@@ -1137,9 +1074,9 @@ export default function App() {
               <button
                 disabled={page === 0}
                 onClick={() => {
-                  const p = Math.max(0, page - 1);
+                  const p = page - 1;
                   setPage(p);
-                  refreshPageFromCache(p);
+                  loadListingsForRun(selectedRun, false, p);
                 }}
               >
                 ← Prev
@@ -1152,7 +1089,7 @@ export default function App() {
                 onClick={() => {
                   const p = page + 1;
                   setPage(p);
-                  refreshPageFromCache(p);
+                  loadListingsForRun(selectedRun, false, p);
                 }}
               >
                 Next →
