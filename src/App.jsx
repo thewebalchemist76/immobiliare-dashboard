@@ -443,11 +443,21 @@ export default function App() {
       return;
     }
 
+    // ✅ FIX: aggiunge Authorization Bearer token (prima funzionava così)
+    const token = session?.access_token;
+    if (!token) {
+      setInviteErr("Sessione non valida (token mancante). Fai logout/login.");
+      return;
+    }
+
     setInviteLoading(true);
     try {
       const res = await fetch(`${BACKEND_URL}/invite-agent`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({
           agency_id: agency.id,
           email,
@@ -456,14 +466,23 @@ export default function App() {
         }),
       });
 
-      const json = await res.json().catch(() => ({}));
+      // alcune API rispondono senza JSON, gestiamo entrambi
+      let json = {};
+      const ct = res.headers.get("content-type") || "";
+      if (ct.includes("application/json")) {
+        json = await res.json().catch(() => ({}));
+      } else {
+        const txt = await res.text().catch(() => "");
+        json = txt ? { error: txt } : {};
+      }
 
       if (!res.ok) {
         setInviteErr(json?.error || "Errore invito.");
         return;
       }
 
-      setInviteMsg("Invito inviato.");
+      // ✅ messaggio “bello” come prima
+      setInviteMsg("Invito inviato con successo.");
       setNewAgentEmail("");
       setNewAgentFirstName("");
       setNewAgentLastName("");
@@ -600,11 +619,9 @@ export default function App() {
     const rows = data || [];
     setAllRunListings(rows);
 
-    // assignments per tutti (serve per filtro agente + colonna)
     const allIds = rows.map((x) => x.id);
     await loadAssignmentsForListingIds(allIds);
 
-    // notes si caricano per pagina nel useEffect sotto
     setNotesByListing({});
     setNotesMetaByListing({});
   };
@@ -866,7 +883,15 @@ export default function App() {
   );
 
   const FiltersRow = () => (
-    <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
+    <div
+      style={{
+        marginTop: 12,
+        display: "flex",
+        gap: 8,
+        flexWrap: "wrap",
+        alignItems: "flex-end",
+      }}
+    >
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         <div className="muted">Data acquisizione da</div>
         <input type="date" value={acqDateFrom} onChange={(e) => setAcqDateFrom(e.target.value)} />
@@ -877,8 +902,16 @@ export default function App() {
         <input type="date" value={acqDateTo} onChange={(e) => setAcqDateTo(e.target.value)} />
       </div>
 
-      <input placeholder="Prezzo min" value={priceMin} onChange={(e) => setPriceMin(e.target.value)} />
-      <input placeholder="Prezzo max" value={priceMax} onChange={(e) => setPriceMax(e.target.value)} />
+      <input
+        placeholder="Prezzo min"
+        value={priceMin}
+        onChange={(e) => setPriceMin(e.target.value)}
+      />
+      <input
+        placeholder="Prezzo max"
+        value={priceMax}
+        onChange={(e) => setPriceMax(e.target.value)}
+      />
 
       <select value={contractFilter} onChange={(e) => setContractFilter(e.target.value)}>
         <option value="">Contratto (tutti)</option>
@@ -901,7 +934,11 @@ export default function App() {
       {/* BREAK: "Agenzia/Privato" + bottoni vanno a capo insieme */}
       <div style={{ flexBasis: "100%", height: 0 }} />
 
-      <select value={advertiserFilter} onChange={(e) => setAdvertiserFilter(e.target.value)} style={{ minWidth: 320 }}>
+      <select
+        value={advertiserFilter}
+        onChange={(e) => setAdvertiserFilter(e.target.value)}
+        style={{ minWidth: 320 }}
+      >
         <option value="">Agenzia/Privato (tutti)</option>
         {advertiserOptions.map((n) => (
           <option key={n} value={n}>
@@ -998,23 +1035,43 @@ export default function App() {
         <div className="card">
           <h3>Agenti</h3>
 
-          <div style={{ marginTop: 16, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          <div
+            style={{
+              marginTop: 16,
+              display: "flex",
+              gap: 10,
+              flexWrap: "wrap",
+              alignItems: "center",
+            }}
+          >
             <input
               placeholder="Nome"
               value={newAgentFirstName}
-              onChange={(e) => setNewAgentFirstName(e.target.value)}
+              onChange={(e) => {
+                setNewAgentFirstName(e.target.value);
+                setInviteMsg("");
+                setInviteErr("");
+              }}
               style={{ minWidth: 220 }}
             />
             <input
               placeholder="Cognome"
               value={newAgentLastName}
-              onChange={(e) => setNewAgentLastName(e.target.value)}
+              onChange={(e) => {
+                setNewAgentLastName(e.target.value);
+                setInviteMsg("");
+                setInviteErr("");
+              }}
               style={{ minWidth: 220 }}
             />
             <input
               placeholder="Email"
               value={newAgentEmail}
-              onChange={(e) => setNewAgentEmail(e.target.value)}
+              onChange={(e) => {
+                setNewAgentEmail(e.target.value);
+                setInviteMsg("");
+                setInviteErr("");
+              }}
               style={{ minWidth: 320 }}
             />
             <button onClick={inviteAgent} disabled={inviteLoading}>
