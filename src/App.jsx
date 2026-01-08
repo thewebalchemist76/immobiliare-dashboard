@@ -1,5 +1,5 @@
 // App.jsx
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "./supabase";
 import "./App.css";
 
@@ -13,6 +13,20 @@ const fmtDate = (d) => {
 };
 
 const safe = (v, fallback = "") => (v === null || v === undefined ? fallback : v);
+
+const startOfDayISO = (yyyyMmDd) => {
+  if (!yyyyMmDd) return null;
+  const dt = new Date(`${yyyyMmDd}T00:00:00.000`);
+  if (isNaN(dt)) return null;
+  return dt.toISOString();
+};
+
+const endOfDayISO = (yyyyMmDd) => {
+  if (!yyyyMmDd) return null;
+  const dt = new Date(`${yyyyMmDd}T23:59:59.999`);
+  if (isNaN(dt)) return null;
+  return dt.toISOString();
+};
 
 export default function App() {
   const BACKEND_URL =
@@ -33,9 +47,18 @@ export default function App() {
   const [runs, setRuns] = useState([]);
   const [selectedRun, setSelectedRun] = useState(null);
 
+  // ===== RUN DATA (tutto il run, poi filtri client + paginazione) =====
+  const [allRunListings, setAllRunListings] = useState([]);
   const [listings, setListings] = useState([]);
+
+  // filtri
+  const [acqDateFrom, setAcqDateFrom] = useState("");
+  const [acqDateTo, setAcqDateTo] = useState("");
   const [priceMin, setPriceMin] = useState("");
   const [priceMax, setPriceMax] = useState("");
+  const [contractFilter, setContractFilter] = useState("");
+  const [agentFilter, setAgentFilter] = useState("");
+  const [advertiserFilter, setAdvertiserFilter] = useState("");
 
   const [page, setPage] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
@@ -59,7 +82,7 @@ export default function App() {
 
   // AGENTS mapping + dropdown TL
   const [agencyAgents, setAgencyAgents] = useState([]); // [{user_id,email,role}]
-  // ASSIGNMENTS visibili per listing nella pagina corrente
+  // ASSIGNMENTS per listing (su tutto il run, per filtro agente)
   const [assignByListing, setAssignByListing] = useState({}); // { [listing_id]: agent_user_id }
 
   // ===== TAB "AGENTI" (INVITI) =====
@@ -73,6 +96,23 @@ export default function App() {
     if (window.location.hash) {
       history.replaceState(null, "", window.location.pathname + window.location.search);
     }
+  };
+
+  const getAdvertiserName = (raw) => {
+    const a = raw?.analytics || {};
+    const c = raw?.contacts || {};
+
+    const advertiser = (a.advertiser || "").toLowerCase();
+    const agencyName = a.agencyName || c.agencyName || "";
+    const contactName = c.name || c.contactName || "";
+
+    if (advertiser && advertiser !== "agenzia") {
+      // privato
+      return contactName ? `Privato: ${contactName}` : "Privato";
+    }
+
+    // agenzia (default)
+    return agencyName ? `Agenzia: ${agencyName}` : "Agenzia";
   };
 
   const openDetails = (l) => {
@@ -145,7 +185,7 @@ export default function App() {
         return { data, error: null };
       };
 
-      // 1) match legacy: agents.id == auth.uid()
+      // 1) legacy: agents.id == auth.uid()
       let res = await tryQuery(
         supabase
           .from("agents")
@@ -153,7 +193,7 @@ export default function App() {
           .eq("id", uid)
       );
 
-      // 2) match standard: agents.user_id == auth.uid()
+      // 2) standard: agents.user_id == auth.uid()
       if (!res.data && !res.error) {
         res = await tryQuery(
           supabase
@@ -340,7 +380,7 @@ export default function App() {
     await loadNotesForListingIds(listings.map((x) => x.id));
   };
 
-  /* ================= AGENCY AGENTS (sempre: serve mapping email) ================= */
+  /* ================= AGENCY AGENTS ================= */
   const loadAgencyAgents = async () => {
     if (!agency?.id) {
       setAgencyAgents([]);
@@ -376,18 +416,16 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agency?.id]);
 
-  const agentEmailByUserId = agencyAgents.reduce((acc, a) => {
-    acc[a.user_id] = a.email;
-    return acc;
-  }, {});
+  const agentEmailByUserId = useMemo(() => {
+    return agencyAgents.reduce((acc, a) => {
+      acc[a.user_id] = a.email;
+      return acc;
+    }, {});
+  }, [agencyAgents]);
 
-  /* ================= ASSIGNMENTS (sempre SELECT, solo TL modifica) ================= */
+  /* ================= ASSIGNMENTS (per filtro agente + colonne) ================= */
   const loadAssignmentsForListingIds = async (listingIds) => {
-    if (!agency?.id) {
-      setAssignByListing({});
-      return;
-    }
-    if (!listingIds?.length) {
+    if (!agency?.id || !listingIds?.length) {
       setAssignByListing({});
       return;
     }
@@ -453,8 +491,8 @@ export default function App() {
     setAssignByListing((prev) => ({ ...prev, [listingId]: agentUserId }));
   };
 
-  /* ================= LOAD LISTINGS ================= */
-  const loadListingsForRun = async (run, resetPage = true, pageOverride = null) => {
+  /* ================= LOAD LISTINGS (RUN) ================= */
+  const loadListingsForRun = async (run, resetPage = true) => {
     if (!run) return;
 
     setSelectedRun(run);
@@ -466,6 +504,7 @@ export default function App() {
       .eq("run_id", run.id);
 
     if (linksErr || !links?.length) {
+      setAllRunListings([]);
       setListings([]);
       setTotalCount(0);
       setNotesByListing({});
@@ -476,56 +515,115 @@ export default function App() {
 
     const ids = links.map((l) => l.listing_id);
 
-    let countQuery = supabase
-      .from("listings")
-      .select("id", { count: "exact", head: true })
-      .in("id", ids);
-
-    if (priceMin) countQuery = countQuery.gte("price", Number(priceMin));
-    if (priceMax) countQuery = countQuery.lte("price", Number(priceMax));
-
-    const { count } = await countQuery;
-    setTotalCount(count || 0);
-
     let dataQuery = supabase
       .from("listings")
       .select("id, price, url, raw, first_seen_at")
       .in("id", ids)
       .order("price", { ascending: true });
 
+    // filtri server: prezzo + data acquisizione
     if (priceMin) dataQuery = dataQuery.gte("price", Number(priceMin));
     if (priceMax) dataQuery = dataQuery.lte("price", Number(priceMax));
 
-    const p = pageOverride ?? (resetPage ? 0 : page);
-    const from = p * PAGE_SIZE;
-    const to = from + PAGE_SIZE - 1;
+    const isoFrom = startOfDayISO(acqDateFrom);
+    const isoTo = endOfDayISO(acqDateTo);
+    if (isoFrom) dataQuery = dataQuery.gte("first_seen_at", isoFrom);
+    if (isoTo) dataQuery = dataQuery.lte("first_seen_at", isoTo);
 
-    const { data, error } = await dataQuery.range(from, to);
+    const { data, error } = await dataQuery;
 
     if (error) {
       console.error("loadListingsForRun:", error.message);
+      setAllRunListings([]);
       setListings([]);
+      setTotalCount(0);
+      setAssignByListing({});
       return;
     }
 
     const rows = data || [];
-    setListings(rows);
+    setAllRunListings(rows);
 
-    const pageListingIds = rows.map((x) => x.id);
+    const allIds = rows.map((x) => x.id);
+    await loadAssignmentsForListingIds(allIds);
 
-    await loadNotesForListingIds(pageListingIds);
-    await loadAssignmentsForListingIds(pageListingIds);
-
-    if (detailsOpen && detailsListing?.id) {
-      const still = rows.find((x) => x.id === detailsListing.id);
-      if (!still) closeDetails();
-    }
+    // notes si caricano per pagina (useEffect sotto)
+    setNotesByListing({});
+    setNotesMetaByListing({});
   };
 
+  // filtri client (contratto, agente, agenzia/privato)
+  const filteredRunListings = useMemo(() => {
+    let arr = [...(allRunListings || [])];
+
+    if (contractFilter) {
+      arr = arr.filter((l) => (l?.raw?.contract?.name || "") === contractFilter);
+    }
+
+    if (agentFilter) {
+      arr = arr.filter((l) => (assignByListing?.[l.id] || "") === agentFilter);
+    }
+
+    if (advertiserFilter) {
+      arr = arr.filter((l) => getAdvertiserName(l?.raw || {}) === advertiserFilter);
+    }
+
+    return arr;
+  }, [allRunListings, contractFilter, agentFilter, advertiserFilter, assignByListing]);
+
+  // pagina + notes
+  useEffect(() => {
+    const total = filteredRunListings.length;
+    setTotalCount(total);
+
+    const totalPagesLocal = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    const currentPage = Math.min(page, totalPagesLocal - 1);
+    if (currentPage !== page) return setPage(currentPage);
+
+    const from = currentPage * PAGE_SIZE;
+    const to = from + PAGE_SIZE;
+    const pageRows = filteredRunListings.slice(from, to);
+
+    setListings(pageRows);
+
+    const pageIds = pageRows.map((x) => x.id);
+    loadNotesForListingIds(pageIds);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filteredRunListings, page]);
+
+  const contractOptions = useMemo(() => {
+    const set = new Set();
+    (allRunListings || []).forEach((l) => {
+      const c = l?.raw?.contract?.name;
+      if (c) set.add(c);
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b, "it"));
+  }, [allRunListings]);
+
+  const advertiserOptions = useMemo(() => {
+    const set = new Set();
+    (allRunListings || []).forEach((l) => {
+      const name = getAdvertiserName(l?.raw || {});
+      if (name) set.add(name);
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b, "it"));
+  }, [allRunListings]);
+
   const resetFilters = () => {
+    setAcqDateFrom("");
+    setAcqDateTo("");
     setPriceMin("");
     setPriceMax("");
-    if (selectedRun) loadListingsForRun(selectedRun, true, 0);
+    setContractFilter("");
+    setAgentFilter("");
+    setAdvertiserFilter("");
+    setPage(0);
+    if (selectedRun) loadListingsForRun(selectedRun, true);
+  };
+
+  const applyFilters = () => {
+    setPage(0);
+    if (selectedRun) loadListingsForRun(selectedRun, true);
   };
 
   // autosave debounce note
@@ -578,13 +676,13 @@ export default function App() {
       if (!res.ok) {
         setInviteMsg(json?.error || "Errore invito");
       } else {
-        setInviteMsg("Invito inviato.");
+        setInviteMsg("Invito inviato con successo.");
         setInviteEmail("");
         setInviteFirstName("");
         setInviteLastName("");
         loadAgencyAgents();
       }
-    } catch (e) {
+    } catch {
       setInviteMsg("Errore invito");
     } finally {
       setInviteLoading(false);
@@ -614,7 +712,6 @@ export default function App() {
     );
   }
 
-  // loading gate
   if (agentProfileLoading || agencyLoading) {
     return (
       <div className="card">
@@ -647,16 +744,83 @@ export default function App() {
 
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
-  // Drawer derivati
   const dl = detailsListing;
   const dr = dl?.raw || {};
   const portal = dl?.url?.includes("immobiliare") ? "immobiliare.it" : "";
-  const drawerAdvertiser = dr?.analytics?.agencyName || dr?.analytics?.advertiser || "";
+  const drawerAdvertiser = getAdvertiserName(dr);
   const firstImg = dr?.media?.images?.[0]?.hd || dr?.media?.images?.[0]?.sd || "";
 
-  // showAgentColumn:
-  // - history: true (read-only)
-  // - team: true (editable, TL only)
+  const FiltersRow = () => (
+    <div
+      style={{
+        marginTop: 12,
+        display: "flex",
+        gap: 8,
+        flexWrap: "wrap",
+        alignItems: "flex-end",
+      }}
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        <div className="muted">Data acquisizione da</div>
+        <input type="date" value={acqDateFrom} onChange={(e) => setAcqDateFrom(e.target.value)} />
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        <div className="muted">Data acquisizione a</div>
+        <input type="date" value={acqDateTo} onChange={(e) => setAcqDateTo(e.target.value)} />
+      </div>
+
+      <input
+        placeholder="Prezzo min"
+        value={priceMin}
+        onChange={(e) => setPriceMin(e.target.value)}
+      />
+      <input
+        placeholder="Prezzo max"
+        value={priceMax}
+        onChange={(e) => setPriceMax(e.target.value)}
+      />
+
+      <select value={contractFilter} onChange={(e) => setContractFilter(e.target.value)}>
+        <option value="">Contratto (tutti)</option>
+        {contractOptions.map((c) => (
+          <option key={c} value={c}>
+            {c}
+          </option>
+        ))}
+      </select>
+
+      <select value={agentFilter} onChange={(e) => setAgentFilter(e.target.value)}>
+        <option value="">Agente (tutti)</option>
+        {agencyAgents.map((a) => (
+          <option key={a.user_id} value={a.user_id}>
+            {a.email}
+          </option>
+        ))}
+      </select>
+
+      <div style={{ flexBasis: "100%", height: 0 }} />
+
+      <select
+        value={advertiserFilter}
+        onChange={(e) => setAdvertiserFilter(e.target.value)}
+        style={{ minWidth: 320 }}
+      >
+        <option value="">Agenzia/Privato (tutti)</option>
+        {advertiserOptions.map((n) => (
+          <option key={n} value={n}>
+            {n}
+          </option>
+        ))}
+      </select>
+
+      <button onClick={applyFilters}>Applica</button>
+      <button onClick={resetFilters} style={{ background: "#e5e7eb", color: "#111" }}>
+        Reset
+      </button>
+    </div>
+  );
+
   const renderListingsTable = ({ showAgentColumn, agentEditable }) => (
     <div className="table-wrap">
       <table className="crm-table">
@@ -679,7 +843,7 @@ export default function App() {
           {listings.map((l) => {
             const r = l.raw || {};
             const rowPortal = l?.url?.includes("immobiliare") ? "immobiliare.it" : "";
-            const rowAdvertiser = r?.analytics?.agencyName || r?.analytics?.advertiser || "";
+            const rowAdvertiser = getAdvertiserName(r);
             const noteSnippet = (notesByListing?.[l.id] || "").trim();
 
             const assignedUserId = assignByListing?.[l.id] || "";
@@ -688,7 +852,7 @@ export default function App() {
             return (
               <tr key={l.id}>
                 <td>{fmtDate(l.first_seen_at)}</td>
-                <td>{fmtDate(r.lastModified * 1000)}</td>
+                <td>{fmtDate((r.lastModified || 0) * 1000)}</td>
                 <td>
                   <div style={{ fontWeight: 600 }}>{safe(r.title)}</div>
                   <div className="muted" style={{ marginTop: 4 }}>
@@ -745,6 +909,13 @@ export default function App() {
               </tr>
             );
           })}
+          {!listings.length && (
+            <tr>
+              <td colSpan={11} className="muted" style={{ padding: 16 }}>
+                Nessun risultato con questi filtri.
+              </td>
+            </tr>
+          )}
         </tbody>
       </table>
     </div>
@@ -757,7 +928,7 @@ export default function App() {
         <h2>
           Dashboard <span className="muted">{session.user.email}</span>
         </h2>
-        <div style={{ display: "flex", gap: 12 }}>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
           <button onClick={() => setView("dashboard")}>Dashboard</button>
           <button onClick={() => setView("history")}>Le mie ricerche</button>
           {isTL && <button onClick={() => setView("team")}>Gestione agenti</button>}
@@ -785,7 +956,12 @@ export default function App() {
             value={selectedRun?.id || ""}
             onChange={(e) => {
               const run = runs.find((r) => r.id === e.target.value);
-              if (run) loadListingsForRun(run, true, 0);
+              if (run) {
+                setPage(0);
+                setAllRunListings([]);
+                setListings([]);
+                loadListingsForRun(run, true);
+              }
             }}
           >
             <option value="">Seleziona…</option>
@@ -797,52 +973,25 @@ export default function App() {
           </select>
 
           {selectedRun && (
-            <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
-              <input
-                placeholder="Prezzo min"
-                value={priceMin}
-                onChange={(e) => setPriceMin(e.target.value)}
-              />
-              <input
-                placeholder="Prezzo max"
-                value={priceMax}
-                onChange={(e) => setPriceMax(e.target.value)}
-              />
-              <button onClick={() => loadListingsForRun(selectedRun, true, 0)}>Applica</button>
-              <button onClick={resetFilters} style={{ background: "#e5e7eb", color: "#111" }}>
-                Reset
-              </button>
-            </div>
-          )}
+            <>
+              <FiltersRow />
+              {renderListingsTable({ showAgentColumn: true, agentEditable: false })}
 
-          {renderListingsTable({ showAgentColumn: true, agentEditable: false })}
-
-          {selectedRun && (
-            <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
-              <button
-                disabled={page === 0}
-                onClick={() => {
-                  const p = page - 1;
-                  setPage(p);
-                  loadListingsForRun(selectedRun, false, p);
-                }}
-              >
-                ← Prev
-              </button>
-              <span className="muted">
-                Pagina {page + 1} / {totalPages}
-              </span>
-              <button
-                disabled={page + 1 >= totalPages}
-                onClick={() => {
-                  const p = page + 1;
-                  setPage(p);
-                  loadListingsForRun(selectedRun, false, p);
-                }}
-              >
-                Next →
-              </button>
-            </div>
+              <div style={{ display: "flex", gap: 12, marginTop: 16, alignItems: "center" }}>
+                <button disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>
+                  ← Prev
+                </button>
+                <span className="muted">
+                  Pagina {page + 1} / {totalPages}
+                </span>
+                <button
+                  disabled={page + 1 >= totalPages}
+                  onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                >
+                  Next →
+                </button>
+              </div>
+            </>
           )}
         </div>
       )}
@@ -856,7 +1005,12 @@ export default function App() {
             value={selectedRun?.id || ""}
             onChange={(e) => {
               const run = runs.find((r) => r.id === e.target.value);
-              if (run) loadListingsForRun(run, true, 0);
+              if (run) {
+                setPage(0);
+                setAllRunListings([]);
+                setListings([]);
+                loadListingsForRun(run, true);
+              }
             }}
           >
             <option value="">Seleziona…</option>
@@ -868,52 +1022,25 @@ export default function App() {
           </select>
 
           {selectedRun && (
-            <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
-              <input
-                placeholder="Prezzo min"
-                value={priceMin}
-                onChange={(e) => setPriceMin(e.target.value)}
-              />
-              <input
-                placeholder="Prezzo max"
-                value={priceMax}
-                onChange={(e) => setPriceMax(e.target.value)}
-              />
-              <button onClick={() => loadListingsForRun(selectedRun, true, 0)}>Applica</button>
-              <button onClick={resetFilters} style={{ background: "#e5e7eb", color: "#111" }}>
-                Reset
-              </button>
-            </div>
-          )}
+            <>
+              <FiltersRow />
+              {renderListingsTable({ showAgentColumn: true, agentEditable: true })}
 
-          {renderListingsTable({ showAgentColumn: true, agentEditable: true })}
-
-          {selectedRun && (
-            <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
-              <button
-                disabled={page === 0}
-                onClick={() => {
-                  const p = page - 1;
-                  setPage(p);
-                  loadListingsForRun(selectedRun, false, p);
-                }}
-              >
-                ← Prev
-              </button>
-              <span className="muted">
-                Pagina {page + 1} / {totalPages}
-              </span>
-              <button
-                disabled={page + 1 >= totalPages}
-                onClick={() => {
-                  const p = page + 1;
-                  setPage(p);
-                  loadListingsForRun(selectedRun, false, p);
-                }}
-              >
-                Next →
-              </button>
-            </div>
+              <div style={{ display: "flex", gap: 12, marginTop: 16, alignItems: "center" }}>
+                <button disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>
+                  ← Prev
+                </button>
+                <span className="muted">
+                  Pagina {page + 1} / {totalPages}
+                </span>
+                <button
+                  disabled={page + 1 >= totalPages}
+                  onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                >
+                  Next →
+                </button>
+              </div>
+            </>
           )}
         </div>
       )}
@@ -1033,38 +1160,13 @@ export default function App() {
               </div>
 
               <div className="kv">
-                <div className="kv-label">Vani</div>
-                <div className="kv-value">{safe(dr?.topology?.rooms, "—")}</div>
-              </div>
-
-              <div className="kv">
-                <div className="kv-label">WC</div>
-                <div className="kv-value">{safe(dr?.topology?.bathrooms, "—")}</div>
-              </div>
-
-              <div className="kv">
-                <div className="kv-label">Piano</div>
-                <div className="kv-value">{safe(dr?.topology?.floor, "—")}</div>
-              </div>
-
-              <div className="kv">
-                <div className="kv-label">Balcone</div>
-                <div className="kv-value">{dr?.topology?.balcony ? "Sì" : "—"}</div>
-              </div>
-
-              <div className="kv">
-                <div className="kv-label">Stato immobile</div>
-                <div className="kv-value">{dr?.analytics?.propertyStatus || "—"}</div>
-              </div>
-
-              <div className="kv">
                 <div className="kv-label">Portale</div>
                 <div className="kv-value">{portal || "—"}</div>
               </div>
 
               <div className="kv">
                 <div className="kv-label">Data pubblicazione</div>
-                <div className="kv-value">{fmtDate(dr?.creationDate * 1000)}</div>
+                <div className="kv-value">{fmtDate((dr?.creationDate || 0) * 1000)}</div>
               </div>
             </div>
           </div>
