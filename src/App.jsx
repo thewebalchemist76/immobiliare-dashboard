@@ -890,80 +890,82 @@ export default function App() {
     </div>
   );
 
-  const FiltersBar = () => (
-    <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "end" }}>
-      <div style={{ display: "grid", gap: 6 }}>
-        <div className="muted" style={{ fontWeight: 600 }}>
-          Data acquisizione da
-        </div>
-        <input type="date" value={acqFrom} onChange={(e) => setAcqFrom(e.target.value)} />
+const FiltersBar = () => (
+  <div className="filters-bar" style={{ marginTop: 12 }}>
+    <div style={{ display: "grid", gap: 6 }}>
+      <div className="muted" style={{ fontWeight: 600 }}>
+        Data acquisizione da
       </div>
+      <input type="date" value={acqFrom} onChange={(e) => setAcqFrom(e.target.value)} />
+    </div>
 
-      <div style={{ display: "grid", gap: 6 }}>
-        <div className="muted" style={{ fontWeight: 600 }}>
-          Data acquisizione a
-        </div>
-        <input type="date" value={acqTo} onChange={(e) => setAcqTo(e.target.value)} />
+    <div style={{ display: "grid", gap: 6 }}>
+      <div className="muted" style={{ fontWeight: 600 }}>
+        Data acquisizione a
       </div>
+      <input type="date" value={acqTo} onChange={(e) => setAcqTo(e.target.value)} />
+    </div>
 
-      <input
-        placeholder="Prezzo min"
-        value={priceMin}
-        onChange={(e) => setPriceMin(e.target.value)}
-        style={{ minWidth: 160 }}
-      />
-      <input
-        placeholder="Prezzo max"
-        value={priceMax}
-        onChange={(e) => setPriceMax(e.target.value)}
-        style={{ minWidth: 160 }}
-      />
+    <input
+      placeholder="Prezzo min"
+      value={priceMin}
+      onChange={(e) => setPriceMin(e.target.value)}
+      style={{ minWidth: 160 }}
+    />
+    <input
+      placeholder="Prezzo max"
+      value={priceMax}
+      onChange={(e) => setPriceMax(e.target.value)}
+      style={{ minWidth: 160 }}
+    />
 
-      <select
-        value={contractFilter}
-        onChange={(e) => setContractFilter(e.target.value)}
-        style={{ minWidth: 220, padding: "10px 12px", borderRadius: 12 }}
-      >
-        <option value="">Contratto (tutti)</option>
-        {contractOptions.map((c) => (
-          <option key={c} value={c}>
-            {c}
-          </option>
-        ))}
-      </select>
+    <select
+      value={contractFilter}
+      onChange={(e) => setContractFilter(e.target.value)}
+      style={{ minWidth: 220, padding: "10px 12px", borderRadius: 12 }}
+    >
+      <option value="">Contratto (tutti)</option>
+      {contractOptions.map((c) => (
+        <option key={c} value={c}>
+          {c}
+        </option>
+      ))}
+    </select>
 
-      <select
-        value={agentFilter}
-        onChange={(e) => setAgentFilter(e.target.value)}
-        style={{ minWidth: 260, padding: "10px 12px", borderRadius: 12 }}
-      >
-        <option value="">Agente (tutti)</option>
-        {agencyAgents.map((a) => (
-          <option key={a.user_id} value={a.user_id}>
-            {a.email}
-          </option>
-        ))}
-      </select>
+    <select
+      value={agentFilter}
+      onChange={(e) => setAgentFilter(e.target.value)}
+      style={{ minWidth: 260, padding: "10px 12px", borderRadius: 12 }}
+    >
+      <option value="">Agente (tutti)</option>
+      {agencyAgents.map((a) => (
+        <option key={a.user_id} value={a.user_id}>
+          {a.email}
+        </option>
+      ))}
+    </select>
 
-      <select
-        value={advertiserFilter}
-        onChange={(e) => setAdvertiserFilter(e.target.value)}
-        style={{ minWidth: 280, padding: "10px 12px", borderRadius: 12 }}
-      >
-        <option value="">Agenzia/Privato (tutti)</option>
-        {advertiserOptions.map((v) => (
-          <option key={v} value={v}>
-            {v}
-          </option>
-        ))}
-      </select>
+    <select
+      value={advertiserFilter}
+      onChange={(e) => setAdvertiserFilter(e.target.value)}
+      style={{ minWidth: 280, padding: "10px 12px", borderRadius: 12 }}
+    >
+      <option value="">Agenzia/Privato (tutti)</option>
+      {advertiserOptions.map((v) => (
+        <option key={v} value={v}>
+          {v}
+        </option>
+      ))}
+    </select>
 
+    <div className="filters-actions">
       <button onClick={applyFilters}>Applica</button>
       <button onClick={resetFilters} style={{ background: "#e5e7eb", color: "#111" }}>
         Reset
       </button>
     </div>
-  );
+  </div>
+);
 
   return (
     <div>
