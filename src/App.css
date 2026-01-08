@@ -40,28 +40,78 @@ body {
   font-size: 14px;
 }
 
-/* ===== FORM ===== */
+/* ===== FORM (uniform heights) ===== */
+input,
+select,
+button {
+  height: 52px;
+  border-radius: 14px;
+}
+
 input,
 select {
-  padding: 14px 16px;
-  border-radius: 14px;
+  padding: 0 16px;
   border: 1px solid var(--border);
   background: #fff;
+  font-size: 14px;
+  line-height: 1;
+}
+
+input::placeholder {
+  color: #9ca3af;
 }
 
 button {
   background: var(--accent);
   color: #fff;
   border: none;
-  padding: 14px 26px;
-  border-radius: 14px;
+  padding: 0 26px;
   font-weight: 600;
   cursor: pointer;
+  font-size: 14px;
 }
 
 button:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+/* date input: evita altezza diversa su Safari/Chrome */
+input[type="date"] {
+  padding: 0 14px;
+}
+
+/* ===== FILTERS (una riga) ===== */
+/* Funziona col markup attuale (div con flexWrap: "wrap") */
+.card [style*="flex-wrap: wrap"] {
+  flex-wrap: nowrap !important;
+  align-items: flex-end;
+}
+
+.card [style*="flex-wrap: wrap"] > * {
+  flex: 0 0 auto;
+}
+
+/* i blocchi con label sopra (data da/a) */
+.card [style*="flex-direction: column"][style*="gap: 4px"] {
+  flex: 0 0 210px;
+}
+
+/* advertiser dropdown più largo */
+.card select[value],
+.card select {
+  min-width: 190px;
+}
+
+/* input prezzo più stretti */
+.card input[placeholder="Prezzo min"],
+.card input[placeholder="Prezzo max"] {
+  width: 160px;
+}
+
+/* dropdown run un po' più largo */
+.card select {
+  min-width: 220px;
 }
 
 /* ===== ACTIONS ===== */
@@ -181,10 +231,9 @@ button:disabled {
   overflow-x: hidden;
   white-space: normal;
   line-height: 1.35;
-  padding-right: 6px; /* spazio per scrollbar */
+  padding-right: 6px;
 }
 
-/* scrollbar (solo estetica, ok se ignorata) */
 .note-cell::-webkit-scrollbar {
   width: 8px;
 }
@@ -286,6 +335,7 @@ button:disabled {
 
 /* bottone "Vedi dettagli" più piccolo */
 .btn-sm {
+  height: auto; /* resta compatto */
   padding: 8px 12px;
   border-radius: 12px;
   font-size: 13px;
