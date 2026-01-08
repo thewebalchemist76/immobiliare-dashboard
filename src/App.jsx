@@ -14,17 +14,6 @@ const fmtDate = (d) => {
 
 const safe = (v, fallback = "") => (v === null || v === undefined ? fallback : v);
 
-// yyyy-mm-dd (per input type="date")
-const toDateInputValue = (d) => {
-  if (!d) return "";
-  const dt = new Date(d);
-  if (isNaN(dt)) return "";
-  const yyyy = dt.getFullYear();
-  const mm = String(dt.getMonth() + 1).padStart(2, "0");
-  const dd = String(dt.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
-};
-
 const startOfDayISO = (yyyyMmDd) => {
   if (!yyyyMmDd) return null;
   const dt = new Date(`${yyyyMmDd}T00:00:00.000`);
@@ -46,11 +35,11 @@ export default function App() {
   const [session, setSession] = useState(null);
 
   // agent profile (tabella agents)
-  const [agentProfile, setAgentProfile] = useState(null); // { id, user_id, role, agency_id, email }
+  const [agentProfile, setAgentProfile] = useState(null);
   const [agentProfileLoading, setAgentProfileLoading] = useState(true);
   const [agentProfileError, setAgentProfileError] = useState("");
 
-  // agency (via agentProfile.agency_id)
+  // agency
   const [agency, setAgency] = useState(null);
   const [agencyLoading, setAgencyLoading] = useState(true);
 
@@ -58,10 +47,9 @@ export default function App() {
   const [runs, setRuns] = useState([]);
   const [selectedRun, setSelectedRun] = useState(null);
 
-  // FULL dataset della run (dopo filtri lato server minimi)
+  // dataset run completo (post filtri server minimi)
   const [allRunListings, setAllRunListings] = useState([]);
-
-  // LISTINGS paginati (dopo filtri client)
+  // pagina corrente
   const [listings, setListings] = useState([]);
 
   // filtri
@@ -71,9 +59,9 @@ export default function App() {
   const [priceMin, setPriceMin] = useState("");
   const [priceMax, setPriceMax] = useState("");
 
-  const [contractFilter, setContractFilter] = useState(""); // es "Vendita"
-  const [agentFilter, setAgentFilter] = useState(""); // agent_user_id
-  const [advertiserFilter, setAdvertiserFilter] = useState(""); // nome agenzia/privato
+  const [contractFilter, setContractFilter] = useState("");
+  const [agentFilter, setAgentFilter] = useState("");
+  const [advertiserFilter, setAdvertiserFilter] = useState("");
 
   const [page, setPage] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
@@ -81,26 +69,24 @@ export default function App() {
   const [loadingRun, setLoadingRun] = useState(false);
   const [runMsg, setRunMsg] = useState("");
 
-  // Notes:
-  // - notesByListing: testo mostrato in tabella (1 nota per annuncio = la più recente)
-  // - notesMetaByListing: meta della nota mostrata (per read-only nel drawer)
+  // notes
   const [notesByListing, setNotesByListing] = useState({});
-  const [notesMetaByListing, setNotesMetaByListing] = useState({}); // { [listing_id]: { user_id, note, updated_at } }
+  const [notesMetaByListing, setNotesMetaByListing] = useState({});
 
-  // Drawer dettagli
+  // drawer
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [detailsListing, setDetailsListing] = useState(null);
 
-  // Drawer note state + debounce save
+  // note draft + debounce
   const [noteDraft, setNoteDraft] = useState("");
   const [noteReadOnly, setNoteReadOnly] = useState(false);
   const saveTimerRef = useRef(null);
   const lastSavedRef = useRef("");
 
-  // AGENTS (per mapping user_id -> email, e per dropdown TL)
+  // agents
   const [agencyAgents, setAgencyAgents] = useState([]); // [{user_id,email,role,first_name,last_name}]
 
-  // ASSIGNMENTS visibili (e per filtro agente)
+  // assignments
   const [assignByListing, setAssignByListing] = useState({}); // { [listing_id]: agent_user_id }
 
   const clearAuthHash = () => {
@@ -170,7 +156,7 @@ export default function App() {
     clearAuthHash();
   };
 
-  /* ================= AGENT PROFILE (agents) ================= */
+  /* ================= AGENT PROFILE ================= */
   useEffect(() => {
     const loadAgentProfile = async () => {
       if (!session?.user?.id) {
@@ -238,7 +224,7 @@ export default function App() {
     loadAgentProfile();
   }, [session?.user?.id, session?.user?.email]);
 
-  /* ================= AGENCY (via agents.agency_id) ================= */
+  /* ================= AGENCY ================= */
   useEffect(() => {
     const loadAgency = async () => {
       if (!agentProfile?.agency_id) {
@@ -388,7 +374,7 @@ export default function App() {
     await loadNotesForListingIds(listings.map((x) => x.id));
   };
 
-  /* ================= AGENCY AGENTS (serve mapping email e filtri) ================= */
+  /* ================= AGENCY AGENTS ================= */
   const loadAgencyAgents = async () => {
     if (!agency?.id) {
       setAgencyAgents([]);
@@ -505,7 +491,7 @@ export default function App() {
     setAssignByListing((prev) => ({ ...prev, [listingId]: agentUserId }));
   };
 
-  /* ================= LOAD LISTINGS ================= */
+  /* ================= LOAD LISTINGS (RUN) ================= */
   const loadListingsForRun = async (run, resetPage = true, pageOverride = null) => {
     if (!run) return;
 
@@ -529,14 +515,13 @@ export default function App() {
 
     const ids = links.map((l) => l.listing_id);
 
-    // query base: prendo tutti (max 50) così posso filtrare su JSON / assignments in modo sicuro
     let dataQuery = supabase
       .from("listings")
       .select("id, price, url, raw, first_seen_at")
       .in("id", ids)
       .order("price", { ascending: true });
 
-    // filtri server semplici (sicuri)
+    // filtri server: prezzo + data acquisizione
     if (priceMin) dataQuery = dataQuery.gte("price", Number(priceMin));
     if (priceMax) dataQuery = dataQuery.lte("price", Number(priceMax));
 
@@ -559,52 +544,42 @@ export default function App() {
     const rows = data || [];
     setAllRunListings(rows);
 
-    // assignments per tutti gli id che ho (serve per filtro agente + colonna agente)
+    // assignments per tutti (serve per filtro agente + colonna)
     const allIds = rows.map((x) => x.id);
     await loadAssignmentsForListingIds(allIds);
 
-    // NOTE: notes le carico solo per pagina (dopo filtro) per non fare query grosse
-    // le carico più sotto dopo aver calcolato la pagina
-    // (qui setto solo placeholders)
+    // notes si caricano per pagina nel useEffect sotto
     setNotesByListing({});
     setNotesMetaByListing({});
   };
 
-  // applica filtri client (contratto, agente, agenzia/privato) + paginazione
+  // filtri client (contratto, agente, adv)
   const filteredRunListings = useMemo(() => {
     let arr = [...(allRunListings || [])];
 
     if (contractFilter) {
-      arr = arr.filter((l) => {
-        const name = l?.raw?.contract?.name || "";
-        return name === contractFilter;
-      });
+      arr = arr.filter((l) => (l?.raw?.contract?.name || "") === contractFilter);
     }
 
     if (agentFilter) {
-      arr = arr.filter((l) => {
-        const assigned = assignByListing?.[l.id] || "";
-        return assigned === agentFilter;
-      });
+      arr = arr.filter((l) => (assignByListing?.[l.id] || "") === agentFilter);
     }
 
     if (advertiserFilter) {
-      arr = arr.filter((l) => {
-        const adv = getAdvertiserName(l?.raw || {});
-        return adv === advertiserFilter;
-      });
+      arr = arr.filter((l) => getAdvertiserName(l?.raw || {}) === advertiserFilter);
     }
 
     return arr;
   }, [allRunListings, contractFilter, agentFilter, advertiserFilter, assignByListing]);
 
+  // pagina + notes
   useEffect(() => {
     const total = filteredRunListings.length;
     setTotalCount(total);
 
-    const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-    const currentPage = Math.min(page, totalPages - 1);
-    if (currentPage !== page) setPage(currentPage);
+    const totalPagesLocal = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    const currentPage = Math.min(page, totalPagesLocal - 1);
+    if (currentPage !== page) return setPage(currentPage);
 
     const from = currentPage * PAGE_SIZE;
     const to = from + PAGE_SIZE;
@@ -652,7 +627,7 @@ export default function App() {
     if (selectedRun) loadListingsForRun(selectedRun, true, 0);
   };
 
-  // autosave debounce note (solo se drawer aperto e non readOnly)
+  // autosave note
   useEffect(() => {
     if (!detailsOpen || !detailsListing?.id) return;
     if (noteReadOnly) return;
@@ -696,7 +671,6 @@ export default function App() {
     );
   }
 
-  // loading gate
   if (agentProfileLoading || agencyLoading) {
     return (
       <div className="card">
@@ -729,7 +703,6 @@ export default function App() {
 
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
-  // Drawer derivati
   const dl = detailsListing;
   const dr = dl?.raw || {};
   const portal = dl?.url?.includes("immobiliare") ? "immobiliare.it" : "";
@@ -845,8 +818,15 @@ export default function App() {
         </h2>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
           <button onClick={() => setView("dashboard")}>Dashboard</button>
-          <button onClick={() => setView("history")}>Le mie ricerche</button>
+          <button
+            onClick={() => {
+              setView("history");
+            }}
+          >
+            Le mie ricerche
+          </button>
           {isTL && <button onClick={() => setView("team")}>Gestione agenti</button>}
+          {isTL && <button onClick={() => setView("agents")}>Agenti</button>}
         </div>
       </div>
 
@@ -871,7 +851,6 @@ export default function App() {
             onChange={(e) => {
               const run = runs.find((r) => r.id === e.target.value);
               if (run) {
-                // reset vista + dati
                 setPage(0);
                 setAllRunListings([]);
                 setListings([]);
@@ -889,7 +868,6 @@ export default function App() {
 
           {selectedRun && (
             <>
-              {/* FILTRI */}
               <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                   <div className="muted">Data acquisizione da</div>
@@ -956,18 +934,10 @@ export default function App() {
                 </button>
               </div>
 
-              {/* COLONNA AGENTE SEMPRE VISIBILE, READ-ONLY */}
               {renderListingsTable({ showAgentColumn: true, agentEditable: false })}
 
-              {/* PAGINAZIONE */}
               <div style={{ display: "flex", gap: 12, marginTop: 16, alignItems: "center" }}>
-                <button
-                  disabled={page === 0}
-                  onClick={() => {
-                    const p = page - 1;
-                    setPage(p);
-                  }}
-                >
+                <button disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>
                   ← Prev
                 </button>
                 <span className="muted">
@@ -975,16 +945,23 @@ export default function App() {
                 </span>
                 <button
                   disabled={page + 1 >= totalPages}
-                  onClick={() => {
-                    const p = page + 1;
-                    setPage(p);
-                  }}
+                  onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
                 >
                   Next →
                 </button>
               </div>
             </>
           )}
+        </div>
+      )}
+
+      {/* AGENTI (solo TL) */}
+      {view === "agents" && isTL && (
+        <div className="card">
+          <h3>Agenti</h3>
+          <p className="muted">
+            Qui mettiamo il form (nome, cognome, email) + invito Supabase. Prossimo step.
+          </p>
         </div>
       )}
 
@@ -1084,13 +1061,7 @@ export default function App() {
               {renderListingsTable({ showAgentColumn: true, agentEditable: true })}
 
               <div style={{ display: "flex", gap: 12, marginTop: 16, alignItems: "center" }}>
-                <button
-                  disabled={page === 0}
-                  onClick={() => {
-                    const p = page - 1;
-                    setPage(p);
-                  }}
-                >
+                <button disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>
                   ← Prev
                 </button>
                 <span className="muted">
@@ -1098,10 +1069,7 @@ export default function App() {
                 </span>
                 <button
                   disabled={page + 1 >= totalPages}
-                  onClick={() => {
-                    const p = page + 1;
-                    setPage(p);
-                  }}
+                  onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
                 >
                   Next →
                 </button>
