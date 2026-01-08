@@ -89,14 +89,6 @@ export default function App() {
   // assignments
   const [assignByListing, setAssignByListing] = useState({}); // { [listing_id]: agent_user_id }
 
-  // ====== AGENTI (form invito) ======
-  const [newAgentFirstName, setNewAgentFirstName] = useState("");
-  const [newAgentLastName, setNewAgentLastName] = useState("");
-  const [newAgentEmail, setNewAgentEmail] = useState("");
-  const [inviteLoading, setInviteLoading] = useState(false);
-  const [inviteMsg, setInviteMsg] = useState("");
-  const [inviteErr, setInviteErr] = useState("");
-
   const clearAuthHash = () => {
     if (window.location.hash) {
       history.replaceState(null, "", window.location.pathname + window.location.search);
@@ -427,54 +419,6 @@ export default function App() {
     }, {});
   }, [agencyAgents]);
 
-  /* ================= INVITE AGENT (TL) ================= */
-  const inviteAgent = async () => {
-    if (!isTL || !agency?.id) return;
-
-    setInviteErr("");
-    setInviteMsg("");
-
-    const email = (newAgentEmail || "").trim().toLowerCase();
-    const first_name = (newAgentFirstName || "").trim();
-    const last_name = (newAgentLastName || "").trim();
-
-    if (!email) {
-      setInviteErr("Email mancante.");
-      return;
-    }
-
-    setInviteLoading(true);
-    try {
-      const res = await fetch(`${BACKEND_URL}/invite-agent`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          agency_id: agency.id,
-          email,
-          first_name,
-          last_name,
-        }),
-      });
-
-      const json = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        setInviteErr(json?.error || "Errore invito.");
-        return;
-      }
-
-      setInviteMsg("Invito inviato.");
-      setNewAgentEmail("");
-      setNewAgentFirstName("");
-      setNewAgentLastName("");
-      await loadAgencyAgents();
-    } catch (e) {
-      setInviteErr(e?.message || "Errore invito.");
-    } finally {
-      setInviteLoading(false);
-    }
-  };
-
   /* ================= ASSIGNMENTS ================= */
   const loadAssignmentsForListingIds = async (listingIds) => {
     if (!agency?.id) {
@@ -548,7 +492,7 @@ export default function App() {
   };
 
   /* ================= LOAD LISTINGS (RUN) ================= */
-  const loadListingsForRun = async (run, resetPage = true) => {
+  const loadListingsForRun = async (run, resetPage = true, pageOverride = null) => {
     if (!run) return;
 
     setSelectedRun(run);
@@ -675,12 +619,12 @@ export default function App() {
     setAgentFilter("");
     setAdvertiserFilter("");
     setPage(0);
-    if (selectedRun) loadListingsForRun(selectedRun, true);
+    if (selectedRun) loadListingsForRun(selectedRun, true, 0);
   };
 
   const applyFilters = () => {
     setPage(0);
-    if (selectedRun) loadListingsForRun(selectedRun, true);
+    if (selectedRun) loadListingsForRun(selectedRun, true, 0);
   };
 
   // autosave note
@@ -865,58 +809,6 @@ export default function App() {
     </div>
   );
 
-  const FiltersRow = () => (
-    <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
-      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-        <div className="muted">Data acquisizione da</div>
-        <input type="date" value={acqDateFrom} onChange={(e) => setAcqDateFrom(e.target.value)} />
-      </div>
-
-      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-        <div className="muted">Data acquisizione a</div>
-        <input type="date" value={acqDateTo} onChange={(e) => setAcqDateTo(e.target.value)} />
-      </div>
-
-      <input placeholder="Prezzo min" value={priceMin} onChange={(e) => setPriceMin(e.target.value)} />
-      <input placeholder="Prezzo max" value={priceMax} onChange={(e) => setPriceMax(e.target.value)} />
-
-      <select value={contractFilter} onChange={(e) => setContractFilter(e.target.value)}>
-        <option value="">Contratto (tutti)</option>
-        {contractOptions.map((c) => (
-          <option key={c} value={c}>
-            {c}
-          </option>
-        ))}
-      </select>
-
-      <select value={agentFilter} onChange={(e) => setAgentFilter(e.target.value)}>
-        <option value="">Agente (tutti)</option>
-        {agencyAgents.map((a) => (
-          <option key={a.user_id} value={a.user_id}>
-            {a.email}
-          </option>
-        ))}
-      </select>
-
-      {/* BREAK: "Agenzia/Privato" + bottoni vanno a capo insieme */}
-      <div style={{ flexBasis: "100%", height: 0 }} />
-
-      <select value={advertiserFilter} onChange={(e) => setAdvertiserFilter(e.target.value)} style={{ minWidth: 320 }}>
-        <option value="">Agenzia/Privato (tutti)</option>
-        {advertiserOptions.map((n) => (
-          <option key={n} value={n}>
-            {n}
-          </option>
-        ))}
-      </select>
-
-      <button onClick={applyFilters}>Applica</button>
-      <button onClick={resetFilters} style={{ background: "#e5e7eb", color: "#111" }}>
-        Reset
-      </button>
-    </div>
-  );
-
   return (
     <div>
       {/* HEADER */}
@@ -926,7 +818,13 @@ export default function App() {
         </h2>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
           <button onClick={() => setView("dashboard")}>Dashboard</button>
-          <button onClick={() => setView("history")}>Le mie ricerche</button>
+          <button
+            onClick={() => {
+              setView("history");
+            }}
+          >
+            Le mie ricerche
+          </button>
           {isTL && <button onClick={() => setView("team")}>Gestione agenti</button>}
           {isTL && <button onClick={() => setView("agents")}>Agenti</button>}
         </div>
@@ -956,7 +854,7 @@ export default function App() {
                 setPage(0);
                 setAllRunListings([]);
                 setListings([]);
-                loadListingsForRun(run, true);
+                loadListingsForRun(run, true, 0);
               }
             }}
           >
@@ -970,7 +868,71 @@ export default function App() {
 
           {selectedRun && (
             <>
-              <FiltersRow />
+              <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <div className="muted">Data acquisizione da</div>
+                  <input
+                    type="date"
+                    value={acqDateFrom}
+                    onChange={(e) => setAcqDateFrom(e.target.value)}
+                  />
+                </div>
+
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <div className="muted">Data acquisizione a</div>
+                  <input
+                    type="date"
+                    value={acqDateTo}
+                    onChange={(e) => setAcqDateTo(e.target.value)}
+                  />
+                </div>
+
+                <input
+                  placeholder="Prezzo min"
+                  value={priceMin}
+                  onChange={(e) => setPriceMin(e.target.value)}
+                />
+                <input
+                  placeholder="Prezzo max"
+                  value={priceMax}
+                  onChange={(e) => setPriceMax(e.target.value)}
+                />
+
+                <select value={contractFilter} onChange={(e) => setContractFilter(e.target.value)}>
+                  <option value="">Contratto (tutti)</option>
+                  {contractOptions.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+
+                <select value={agentFilter} onChange={(e) => setAgentFilter(e.target.value)}>
+                  <option value="">Agente (tutti)</option>
+                  {agencyAgents.map((a) => (
+                    <option key={a.user_id} value={a.user_id}>
+                      {a.email}
+                    </option>
+                  ))}
+                </select>
+
+                <select
+                  value={advertiserFilter}
+                  onChange={(e) => setAdvertiserFilter(e.target.value)}
+                >
+                  <option value="">Agenzia/Privato (tutti)</option>
+                  {advertiserOptions.map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
+
+                <button onClick={applyFilters}>Applica</button>
+                <button onClick={resetFilters} style={{ background: "#e5e7eb", color: "#111" }}>
+                  Reset
+                </button>
+              </div>
 
               {renderListingsTable({ showAgentColumn: true, agentEditable: false })}
 
@@ -993,78 +955,13 @@ export default function App() {
         </div>
       )}
 
-      {/* AGENTI (form identico: nome, cognome, email + invito) */}
+      {/* AGENTI (solo TL) */}
       {view === "agents" && isTL && (
         <div className="card">
           <h3>Agenti</h3>
-
-          <div style={{ marginTop: 16, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-            <input
-              placeholder="Nome"
-              value={newAgentFirstName}
-              onChange={(e) => setNewAgentFirstName(e.target.value)}
-              style={{ minWidth: 220 }}
-            />
-            <input
-              placeholder="Cognome"
-              value={newAgentLastName}
-              onChange={(e) => setNewAgentLastName(e.target.value)}
-              style={{ minWidth: 220 }}
-            />
-            <input
-              placeholder="Email"
-              value={newAgentEmail}
-              onChange={(e) => setNewAgentEmail(e.target.value)}
-              style={{ minWidth: 320 }}
-            />
-            <button onClick={inviteAgent} disabled={inviteLoading}>
-              {inviteLoading ? "Invio…" : "Invita"}
-            </button>
-          </div>
-
-          {inviteErr && (
-            <p className="muted" style={{ marginTop: 10 }}>
-              Errore: {inviteErr}
-            </p>
-          )}
-          {inviteMsg && (
-            <p className="muted" style={{ marginTop: 10 }}>
-              {inviteMsg}
-            </p>
-          )}
-
-          <div style={{ marginTop: 24 }}>
-            <div style={{ fontWeight: 700, marginBottom: 10 }}>Team</div>
-            <div className="table-wrap" style={{ marginTop: 0 }}>
-              <table className="crm-table">
-                <thead>
-                  <tr>
-                    <th>Nome</th>
-                    <th>Cognome</th>
-                    <th>Email</th>
-                    <th>Ruolo</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {agencyAgents.map((a) => (
-                    <tr key={a.user_id}>
-                      <td>{a.first_name || "—"}</td>
-                      <td>{a.last_name || "—"}</td>
-                      <td>{a.email}</td>
-                      <td>{a.role}</td>
-                    </tr>
-                  ))}
-                  {!agencyAgents.length && (
-                    <tr>
-                      <td colSpan={4} className="muted" style={{ padding: 16 }}>
-                        Nessun agente.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
+          <p className="muted">
+            Qui mettiamo il form (nome, cognome, email) + invito Supabase. Prossimo step.
+          </p>
         </div>
       )}
 
@@ -1081,7 +978,7 @@ export default function App() {
                 setPage(0);
                 setAllRunListings([]);
                 setListings([]);
-                loadListingsForRun(run, true);
+                loadListingsForRun(run, true, 0);
               }
             }}
           >
@@ -1095,7 +992,71 @@ export default function App() {
 
           {selectedRun && (
             <>
-              <FiltersRow />
+              <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <div className="muted">Data acquisizione da</div>
+                  <input
+                    type="date"
+                    value={acqDateFrom}
+                    onChange={(e) => setAcqDateFrom(e.target.value)}
+                  />
+                </div>
+
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <div className="muted">Data acquisizione a</div>
+                  <input
+                    type="date"
+                    value={acqDateTo}
+                    onChange={(e) => setAcqDateTo(e.target.value)}
+                  />
+                </div>
+
+                <input
+                  placeholder="Prezzo min"
+                  value={priceMin}
+                  onChange={(e) => setPriceMin(e.target.value)}
+                />
+                <input
+                  placeholder="Prezzo max"
+                  value={priceMax}
+                  onChange={(e) => setPriceMax(e.target.value)}
+                />
+
+                <select value={contractFilter} onChange={(e) => setContractFilter(e.target.value)}>
+                  <option value="">Contratto (tutti)</option>
+                  {contractOptions.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+
+                <select value={agentFilter} onChange={(e) => setAgentFilter(e.target.value)}>
+                  <option value="">Agente (tutti)</option>
+                  {agencyAgents.map((a) => (
+                    <option key={a.user_id} value={a.user_id}>
+                      {a.email}
+                    </option>
+                  ))}
+                </select>
+
+                <select
+                  value={advertiserFilter}
+                  onChange={(e) => setAdvertiserFilter(e.target.value)}
+                >
+                  <option value="">Agenzia/Privato (tutti)</option>
+                  {advertiserOptions.map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
+
+                <button onClick={applyFilters}>Applica</button>
+                <button onClick={resetFilters} style={{ background: "#e5e7eb", color: "#111" }}>
+                  Reset
+                </button>
+              </div>
 
               {renderListingsTable({ showAgentColumn: true, agentEditable: true })}
 
