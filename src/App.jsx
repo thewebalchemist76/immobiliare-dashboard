@@ -915,11 +915,11 @@ export default function App() {
                     </option>
                   ))}
                 </select>
-
+                <div style={{ flexBasis: "100%", height: 0 }} />
                 <select
                   value={advertiserFilter}
                   onChange={(e) => setAdvertiserFilter(e.target.value)}
-                > </br>
+                > 
                   <option value="">Agenzia/Privato (tutti)</option>
                   {advertiserOptions.map((n) => (
                     <option key={n} value={n}>
