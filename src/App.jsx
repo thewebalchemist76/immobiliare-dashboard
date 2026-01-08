@@ -1,5 +1,5 @@
 // App.jsx
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { supabase } from "./supabase";
 import "./App.css";
 
@@ -14,20 +14,6 @@ const fmtDate = (d) => {
 
 const safe = (v, fallback = "") => (v === null || v === undefined ? fallback : v);
 
-const startOfDayISO = (yyyyMmDd) => {
-  if (!yyyyMmDd) return null;
-  const dt = new Date(`${yyyyMmDd}T00:00:00.000`);
-  if (isNaN(dt)) return null;
-  return dt.toISOString();
-};
-
-const endOfDayISO = (yyyyMmDd) => {
-  if (!yyyyMmDd) return null;
-  const dt = new Date(`${yyyyMmDd}T23:59:59.999`);
-  if (isNaN(dt)) return null;
-  return dt.toISOString();
-};
-
 export default function App() {
   const BACKEND_URL =
     import.meta.env.VITE_BACKEND_URL || "https://immobiliare-backend.onrender.com";
@@ -35,33 +21,21 @@ export default function App() {
   const [session, setSession] = useState(null);
 
   // agent profile (tabella agents)
-  const [agentProfile, setAgentProfile] = useState(null);
+  const [agentProfile, setAgentProfile] = useState(null); // { id, user_id, role, agency_id, email }
   const [agentProfileLoading, setAgentProfileLoading] = useState(true);
   const [agentProfileError, setAgentProfileError] = useState("");
 
-  // agency
+  // agency (via agentProfile.agency_id)
   const [agency, setAgency] = useState(null);
   const [agencyLoading, setAgencyLoading] = useState(true);
 
-  const [view, setView] = useState("dashboard"); // dashboard | history | team | agents
+  const [view, setView] = useState("dashboard"); // dashboard | history | team
   const [runs, setRuns] = useState([]);
   const [selectedRun, setSelectedRun] = useState(null);
 
-  // dataset run completo (post filtri server minimi)
-  const [allRunListings, setAllRunListings] = useState([]);
-  // pagina corrente
   const [listings, setListings] = useState([]);
-
-  // filtri
-  const [acqDateFrom, setAcqDateFrom] = useState("");
-  const [acqDateTo, setAcqDateTo] = useState("");
-
   const [priceMin, setPriceMin] = useState("");
   const [priceMax, setPriceMax] = useState("");
-
-  const [contractFilter, setContractFilter] = useState("");
-  const [agentFilter, setAgentFilter] = useState("");
-  const [advertiserFilter, setAdvertiserFilter] = useState("");
 
   const [page, setPage] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
@@ -69,52 +43,32 @@ export default function App() {
   const [loadingRun, setLoadingRun] = useState(false);
   const [runMsg, setRunMsg] = useState("");
 
-  // notes
+  // Notes:
+  // - notesByListing: testo mostrato in tabella (1 nota per annuncio = la più recente)
+  // - notesMetaByListing: meta della nota mostrata (per read-only nel drawer)
   const [notesByListing, setNotesByListing] = useState({});
-  const [notesMetaByListing, setNotesMetaByListing] = useState({});
+  const [notesMetaByListing, setNotesMetaByListing] = useState({}); // { [listing_id]: { user_id, note, updated_at } }
 
-  // drawer
+  // Drawer dettagli
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [detailsListing, setDetailsListing] = useState(null);
 
-  // note draft + debounce
+  // Drawer note state + debounce save
   const [noteDraft, setNoteDraft] = useState("");
   const [noteReadOnly, setNoteReadOnly] = useState(false);
   const saveTimerRef = useRef(null);
   const lastSavedRef = useRef("");
 
-  // agents
-  const [agencyAgents, setAgencyAgents] = useState([]); // [{user_id,email,role,first_name,last_name}]
+  // AGENTS (per mapping user_id -> email, e per dropdown TL)
+  const [agencyAgents, setAgencyAgents] = useState([]); // [{user_id,email,role}]
 
-  // assignments
+  // ASSIGNMENTS visibili per listing nella pagina corrente
   const [assignByListing, setAssignByListing] = useState({}); // { [listing_id]: agent_user_id }
-
-  // ====== AGENTI (form invito) ======
-  const [newAgentFirstName, setNewAgentFirstName] = useState("");
-  const [newAgentLastName, setNewAgentLastName] = useState("");
-  const [newAgentEmail, setNewAgentEmail] = useState("");
-  const [inviteLoading, setInviteLoading] = useState(false);
-  const [inviteMsg, setInviteMsg] = useState("");
-  const [inviteErr, setInviteErr] = useState("");
 
   const clearAuthHash = () => {
     if (window.location.hash) {
       history.replaceState(null, "", window.location.pathname + window.location.search);
     }
-  };
-
-  const getAdvertiserName = (raw) => {
-    const a = raw?.analytics || {};
-    const c = raw?.contacts || {};
-    return (
-      a.agencyName ||
-      a.advertiserName ||
-      c.agencyName ||
-      c.name ||
-      c.contactName ||
-      (a.advertiser && a.advertiser !== "agenzia" ? "Privato" : "") ||
-      ""
-    );
   };
 
   const openDetails = (l) => {
@@ -164,7 +118,7 @@ export default function App() {
     clearAuthHash();
   };
 
-  /* ================= AGENT PROFILE ================= */
+  /* ================= AGENT PROFILE (agents) ================= */
   useEffect(() => {
     const loadAgentProfile = async () => {
       if (!session?.user?.id) {
@@ -187,20 +141,20 @@ export default function App() {
         return { data, error: null };
       };
 
-      // 1) legacy: agents.id == auth.uid()
+      // 1) match legacy: agents.id == auth.uid()
       let res = await tryQuery(
         supabase
           .from("agents")
-          .select("id, user_id, email, role, agency_id, created_at, first_name, last_name")
+          .select("id, user_id, email, role, agency_id, created_at")
           .eq("id", uid)
       );
 
-      // 2) standard: agents.user_id == auth.uid()
+      // 2) match standard: agents.user_id == auth.uid()
       if (!res.data && !res.error) {
         res = await tryQuery(
           supabase
             .from("agents")
-            .select("id, user_id, email, role, agency_id, created_at, first_name, last_name")
+            .select("id, user_id, email, role, agency_id, created_at")
             .eq("user_id", uid)
         );
       }
@@ -210,7 +164,7 @@ export default function App() {
         res = await tryQuery(
           supabase
             .from("agents")
-            .select("id, user_id, email, role, agency_id, created_at, first_name, last_name")
+            .select("id, user_id, email, role, agency_id, created_at")
             .eq("email", email)
         );
       }
@@ -232,7 +186,7 @@ export default function App() {
     loadAgentProfile();
   }, [session?.user?.id, session?.user?.email]);
 
-  /* ================= AGENCY ================= */
+  /* ================= AGENCY (via agents.agency_id) ================= */
   useEffect(() => {
     const loadAgency = async () => {
       if (!agentProfile?.agency_id) {
@@ -382,7 +336,7 @@ export default function App() {
     await loadNotesForListingIds(listings.map((x) => x.id));
   };
 
-  /* ================= AGENCY AGENTS ================= */
+  /* ================= AGENCY AGENTS (sempre: serve mapping email) ================= */
   const loadAgencyAgents = async () => {
     if (!agency?.id) {
       setAgencyAgents([]);
@@ -391,7 +345,7 @@ export default function App() {
 
     const { data, error } = await supabase
       .from("agents")
-      .select("id, user_id, email, role, first_name, last_name")
+      .select("id, user_id, email, role")
       .eq("agency_id", agency.id)
       .order("role", { ascending: true })
       .order("email", { ascending: true });
@@ -407,8 +361,6 @@ export default function App() {
         user_id: a.user_id || a.id,
         email: a.email,
         role: a.role,
-        first_name: a.first_name || "",
-        last_name: a.last_name || "",
       }))
       .filter((a) => !!a.user_id);
 
@@ -420,81 +372,12 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agency?.id]);
 
-  const agentEmailByUserId = useMemo(() => {
-    return agencyAgents.reduce((acc, a) => {
-      acc[a.user_id] = a.email;
-      return acc;
-    }, {});
-  }, [agencyAgents]);
+  const agentEmailByUserId = agencyAgents.reduce((acc, a) => {
+    acc[a.user_id] = a.email;
+    return acc;
+  }, {});
 
-  /* ================= INVITE AGENT (TL) ================= */
-  const inviteAgent = async () => {
-    if (!isTL || !agency?.id) return;
-
-    setInviteErr("");
-    setInviteMsg("");
-
-    const email = (newAgentEmail || "").trim().toLowerCase();
-    const first_name = (newAgentFirstName || "").trim();
-    const last_name = (newAgentLastName || "").trim();
-
-    if (!email) {
-      setInviteErr("Email mancante.");
-      return;
-    }
-
-    // ✅ FIX: aggiunge Authorization Bearer token (prima funzionava così)
-    const token = session?.access_token;
-    if (!token) {
-      setInviteErr("Sessione non valida (token mancante). Fai logout/login.");
-      return;
-    }
-
-    setInviteLoading(true);
-    try {
-      const res = await fetch(`${BACKEND_URL}/invite-agent`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          agency_id: agency.id,
-          email,
-          first_name,
-          last_name,
-        }),
-      });
-
-      // alcune API rispondono senza JSON, gestiamo entrambi
-      let json = {};
-      const ct = res.headers.get("content-type") || "";
-      if (ct.includes("application/json")) {
-        json = await res.json().catch(() => ({}));
-      } else {
-        const txt = await res.text().catch(() => "");
-        json = txt ? { error: txt } : {};
-      }
-
-      if (!res.ok) {
-        setInviteErr(json?.error || "Errore invito.");
-        return;
-      }
-
-      // ✅ messaggio “bello” come prima
-      setInviteMsg("Invito inviato con successo.");
-      setNewAgentEmail("");
-      setNewAgentFirstName("");
-      setNewAgentLastName("");
-      await loadAgencyAgents();
-    } catch (e) {
-      setInviteErr(e?.message || "Errore invito.");
-    } finally {
-      setInviteLoading(false);
-    }
-  };
-
-  /* ================= ASSIGNMENTS ================= */
+  /* ================= ASSIGNMENTS (sempre SELECT, solo TL modifica) ================= */
   const loadAssignmentsForListingIds = async (listingIds) => {
     if (!agency?.id) {
       setAssignByListing({});
@@ -566,8 +449,8 @@ export default function App() {
     setAssignByListing((prev) => ({ ...prev, [listingId]: agentUserId }));
   };
 
-  /* ================= LOAD LISTINGS (RUN) ================= */
-  const loadListingsForRun = async (run, resetPage = true) => {
+  /* ================= LOAD LISTINGS ================= */
+  const loadListingsForRun = async (run, resetPage = true, pageOverride = null) => {
     if (!run) return;
 
     setSelectedRun(run);
@@ -579,7 +462,6 @@ export default function App() {
       .eq("run_id", run.id);
 
     if (linksErr || !links?.length) {
-      setAllRunListings([]);
       setListings([]);
       setTotalCount(0);
       setNotesByListing({});
@@ -590,117 +472,59 @@ export default function App() {
 
     const ids = links.map((l) => l.listing_id);
 
+    let countQuery = supabase
+      .from("listings")
+      .select("id", { count: "exact", head: true })
+      .in("id", ids);
+
+    if (priceMin) countQuery = countQuery.gte("price", Number(priceMin));
+    if (priceMax) countQuery = countQuery.lte("price", Number(priceMax));
+
+    const { count } = await countQuery;
+    setTotalCount(count || 0);
+
     let dataQuery = supabase
       .from("listings")
       .select("id, price, url, raw, first_seen_at")
       .in("id", ids)
       .order("price", { ascending: true });
 
-    // filtri server: prezzo + data acquisizione
     if (priceMin) dataQuery = dataQuery.gte("price", Number(priceMin));
     if (priceMax) dataQuery = dataQuery.lte("price", Number(priceMax));
 
-    const isoFrom = startOfDayISO(acqDateFrom);
-    const isoTo = endOfDayISO(acqDateTo);
-    if (isoFrom) dataQuery = dataQuery.gte("first_seen_at", isoFrom);
-    if (isoTo) dataQuery = dataQuery.lte("first_seen_at", isoTo);
+    const p = pageOverride ?? (resetPage ? 0 : page);
+    const from = p * PAGE_SIZE;
+    const to = from + PAGE_SIZE - 1;
 
-    const { data, error } = await dataQuery;
+    const { data, error } = await dataQuery.range(from, to);
 
     if (error) {
       console.error("loadListingsForRun:", error.message);
-      setAllRunListings([]);
       setListings([]);
-      setTotalCount(0);
-      setAssignByListing({});
       return;
     }
 
     const rows = data || [];
-    setAllRunListings(rows);
+    setListings(rows);
 
-    const allIds = rows.map((x) => x.id);
-    await loadAssignmentsForListingIds(allIds);
+    const pageListingIds = rows.map((x) => x.id);
 
-    setNotesByListing({});
-    setNotesMetaByListing({});
+    await loadNotesForListingIds(pageListingIds);
+    await loadAssignmentsForListingIds(pageListingIds);
+
+    if (detailsOpen && detailsListing?.id) {
+      const still = rows.find((x) => x.id === detailsListing.id);
+      if (!still) closeDetails();
+    }
   };
-
-  // filtri client (contratto, agente, adv)
-  const filteredRunListings = useMemo(() => {
-    let arr = [...(allRunListings || [])];
-
-    if (contractFilter) {
-      arr = arr.filter((l) => (l?.raw?.contract?.name || "") === contractFilter);
-    }
-
-    if (agentFilter) {
-      arr = arr.filter((l) => (assignByListing?.[l.id] || "") === agentFilter);
-    }
-
-    if (advertiserFilter) {
-      arr = arr.filter((l) => getAdvertiserName(l?.raw || {}) === advertiserFilter);
-    }
-
-    return arr;
-  }, [allRunListings, contractFilter, agentFilter, advertiserFilter, assignByListing]);
-
-  // pagina + notes
-  useEffect(() => {
-    const total = filteredRunListings.length;
-    setTotalCount(total);
-
-    const totalPagesLocal = Math.max(1, Math.ceil(total / PAGE_SIZE));
-    const currentPage = Math.min(page, totalPagesLocal - 1);
-    if (currentPage !== page) return setPage(currentPage);
-
-    const from = currentPage * PAGE_SIZE;
-    const to = from + PAGE_SIZE;
-    const pageRows = filteredRunListings.slice(from, to);
-
-    setListings(pageRows);
-
-    const pageIds = pageRows.map((x) => x.id);
-    loadNotesForListingIds(pageIds);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filteredRunListings, page]);
-
-  const contractOptions = useMemo(() => {
-    const set = new Set();
-    (allRunListings || []).forEach((l) => {
-      const c = l?.raw?.contract?.name;
-      if (c) set.add(c);
-    });
-    return Array.from(set).sort((a, b) => a.localeCompare(b, "it"));
-  }, [allRunListings]);
-
-  const advertiserOptions = useMemo(() => {
-    const set = new Set();
-    (allRunListings || []).forEach((l) => {
-      const adv = getAdvertiserName(l?.raw || {});
-      if (adv) set.add(adv);
-    });
-    return Array.from(set).sort((a, b) => a.localeCompare(b, "it"));
-  }, [allRunListings]);
 
   const resetFilters = () => {
-    setAcqDateFrom("");
-    setAcqDateTo("");
     setPriceMin("");
     setPriceMax("");
-    setContractFilter("");
-    setAgentFilter("");
-    setAdvertiserFilter("");
-    setPage(0);
-    if (selectedRun) loadListingsForRun(selectedRun, true);
+    if (selectedRun) loadListingsForRun(selectedRun, true, 0);
   };
 
-  const applyFilters = () => {
-    setPage(0);
-    if (selectedRun) loadListingsForRun(selectedRun, true);
-  };
-
-  // autosave note
+  // autosave debounce note (solo se drawer aperto e non readOnly)
   useEffect(() => {
     if (!detailsOpen || !detailsListing?.id) return;
     if (noteReadOnly) return;
@@ -744,6 +568,7 @@ export default function App() {
     );
   }
 
+  // loading gate
   if (agentProfileLoading || agencyLoading) {
     return (
       <div className="card">
@@ -776,12 +601,16 @@ export default function App() {
 
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
+  // Drawer derivati
   const dl = detailsListing;
   const dr = dl?.raw || {};
   const portal = dl?.url?.includes("immobiliare") ? "immobiliare.it" : "";
-  const drawerAdvertiser = getAdvertiserName(dr);
+  const drawerAdvertiser = dr?.analytics?.agencyName || dr?.analytics?.advertiser || "";
   const firstImg = dr?.media?.images?.[0]?.hd || dr?.media?.images?.[0]?.sd || "";
 
+  // showAgentColumn:
+  // - history: true (read-only)
+  // - team: true (editable, TL only)
   const renderListingsTable = ({ showAgentColumn, agentEditable }) => (
     <div className="table-wrap">
       <table className="crm-table">
@@ -804,7 +633,7 @@ export default function App() {
           {listings.map((l) => {
             const r = l.raw || {};
             const rowPortal = l?.url?.includes("immobiliare") ? "immobiliare.it" : "";
-            const rowAdvertiser = getAdvertiserName(r);
+            const rowAdvertiser = r?.analytics?.agencyName || r?.analytics?.advertiser || "";
             const noteSnippet = (notesByListing?.[l.id] || "").trim();
 
             const assignedUserId = assignByListing?.[l.id] || "";
@@ -813,7 +642,7 @@ export default function App() {
             return (
               <tr key={l.id}>
                 <td>{fmtDate(l.first_seen_at)}</td>
-                <td>{fmtDate((r.lastModified || 0) * 1000)}</td>
+                <td>{fmtDate(r.lastModified * 1000)}</td>
                 <td>
                   <div style={{ fontWeight: 600 }}>{safe(r.title)}</div>
                   <div className="muted" style={{ marginTop: 4 }}>
@@ -870,87 +699,8 @@ export default function App() {
               </tr>
             );
           })}
-          {!listings.length && (
-            <tr>
-              <td colSpan={11} className="muted" style={{ padding: 16 }}>
-                Nessun risultato con questi filtri.
-              </td>
-            </tr>
-          )}
         </tbody>
       </table>
-    </div>
-  );
-
-  const FiltersRow = () => (
-    <div
-      style={{
-        marginTop: 12,
-        display: "flex",
-        gap: 8,
-        flexWrap: "wrap",
-        alignItems: "flex-end",
-      }}
-    >
-      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-        <div className="muted">Data acquisizione da</div>
-        <input type="date" value={acqDateFrom} onChange={(e) => setAcqDateFrom(e.target.value)} />
-      </div>
-
-      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-        <div className="muted">Data acquisizione a</div>
-        <input type="date" value={acqDateTo} onChange={(e) => setAcqDateTo(e.target.value)} />
-      </div>
-
-      <input
-        placeholder="Prezzo min"
-        value={priceMin}
-        onChange={(e) => setPriceMin(e.target.value)}
-      />
-      <input
-        placeholder="Prezzo max"
-        value={priceMax}
-        onChange={(e) => setPriceMax(e.target.value)}
-      />
-
-      <select value={contractFilter} onChange={(e) => setContractFilter(e.target.value)}>
-        <option value="">Contratto (tutti)</option>
-        {contractOptions.map((c) => (
-          <option key={c} value={c}>
-            {c}
-          </option>
-        ))}
-      </select>
-
-      <select value={agentFilter} onChange={(e) => setAgentFilter(e.target.value)}>
-        <option value="">Agente (tutti)</option>
-        {agencyAgents.map((a) => (
-          <option key={a.user_id} value={a.user_id}>
-            {a.email}
-          </option>
-        ))}
-      </select>
-
-      {/* BREAK: "Agenzia/Privato" + bottoni vanno a capo insieme */}
-      <div style={{ flexBasis: "100%", height: 0 }} />
-
-      <select
-        value={advertiserFilter}
-        onChange={(e) => setAdvertiserFilter(e.target.value)}
-        style={{ minWidth: 320 }}
-      >
-        <option value="">Agenzia/Privato (tutti)</option>
-        {advertiserOptions.map((n) => (
-          <option key={n} value={n}>
-            {n}
-          </option>
-        ))}
-      </select>
-
-      <button onClick={applyFilters}>Applica</button>
-      <button onClick={resetFilters} style={{ background: "#e5e7eb", color: "#111" }}>
-        Reset
-      </button>
     </div>
   );
 
@@ -961,11 +711,10 @@ export default function App() {
         <h2>
           Dashboard <span className="muted">{session.user.email}</span>
         </h2>
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 12 }}>
           <button onClick={() => setView("dashboard")}>Dashboard</button>
           <button onClick={() => setView("history")}>Le mie ricerche</button>
           {isTL && <button onClick={() => setView("team")}>Gestione agenti</button>}
-          {isTL && <button onClick={() => setView("agents")}>Agenti</button>}
         </div>
       </div>
 
@@ -989,12 +738,7 @@ export default function App() {
             value={selectedRun?.id || ""}
             onChange={(e) => {
               const run = runs.find((r) => r.id === e.target.value);
-              if (run) {
-                setPage(0);
-                setAllRunListings([]);
-                setListings([]);
-                loadListingsForRun(run, true);
-              }
+              if (run) loadListingsForRun(run, true, 0);
             }}
           >
             <option value="">Seleziona…</option>
@@ -1006,122 +750,54 @@ export default function App() {
           </select>
 
           {selectedRun && (
-            <>
-              <FiltersRow />
-
-              {renderListingsTable({ showAgentColumn: true, agentEditable: false })}
-
-              <div style={{ display: "flex", gap: 12, marginTop: 16, alignItems: "center" }}>
-                <button disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>
-                  ← Prev
-                </button>
-                <span className="muted">
-                  Pagina {page + 1} / {totalPages}
-                </span>
-                <button
-                  disabled={page + 1 >= totalPages}
-                  onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
-                >
-                  Next →
-                </button>
-              </div>
-            </>
-          )}
-        </div>
-      )}
-
-      {/* AGENTI (form identico: nome, cognome, email + invito) */}
-      {view === "agents" && isTL && (
-        <div className="card">
-          <h3>Agenti</h3>
-
-          <div
-            style={{
-              marginTop: 16,
-              display: "flex",
-              gap: 10,
-              flexWrap: "wrap",
-              alignItems: "center",
-            }}
-          >
-            <input
-              placeholder="Nome"
-              value={newAgentFirstName}
-              onChange={(e) => {
-                setNewAgentFirstName(e.target.value);
-                setInviteMsg("");
-                setInviteErr("");
-              }}
-              style={{ minWidth: 220 }}
-            />
-            <input
-              placeholder="Cognome"
-              value={newAgentLastName}
-              onChange={(e) => {
-                setNewAgentLastName(e.target.value);
-                setInviteMsg("");
-                setInviteErr("");
-              }}
-              style={{ minWidth: 220 }}
-            />
-            <input
-              placeholder="Email"
-              value={newAgentEmail}
-              onChange={(e) => {
-                setNewAgentEmail(e.target.value);
-                setInviteMsg("");
-                setInviteErr("");
-              }}
-              style={{ minWidth: 320 }}
-            />
-            <button onClick={inviteAgent} disabled={inviteLoading}>
-              {inviteLoading ? "Invio…" : "Invita"}
-            </button>
-          </div>
-
-          {inviteErr && (
-            <p className="muted" style={{ marginTop: 10 }}>
-              Errore: {inviteErr}
-            </p>
-          )}
-          {inviteMsg && (
-            <p className="muted" style={{ marginTop: 10 }}>
-              {inviteMsg}
-            </p>
-          )}
-
-          <div style={{ marginTop: 24 }}>
-            <div style={{ fontWeight: 700, marginBottom: 10 }}>Team</div>
-            <div className="table-wrap" style={{ marginTop: 0 }}>
-              <table className="crm-table">
-                <thead>
-                  <tr>
-                    <th>Nome</th>
-                    <th>Cognome</th>
-                    <th>Email</th>
-                    <th>Ruolo</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {agencyAgents.map((a) => (
-                    <tr key={a.user_id}>
-                      <td>{a.first_name || "—"}</td>
-                      <td>{a.last_name || "—"}</td>
-                      <td>{a.email}</td>
-                      <td>{a.role}</td>
-                    </tr>
-                  ))}
-                  {!agencyAgents.length && (
-                    <tr>
-                      <td colSpan={4} className="muted" style={{ padding: 16 }}>
-                        Nessun agente.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+            <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
+              <input
+                placeholder="Prezzo min"
+                value={priceMin}
+                onChange={(e) => setPriceMin(e.target.value)}
+              />
+              <input
+                placeholder="Prezzo max"
+                value={priceMax}
+                onChange={(e) => setPriceMax(e.target.value)}
+              />
+              <button onClick={() => loadListingsForRun(selectedRun, true, 0)}>Applica</button>
+              <button onClick={resetFilters} style={{ background: "#e5e7eb", color: "#111" }}>
+                Reset
+              </button>
             </div>
-          </div>
+          )}
+
+          {/* QUI: colonna Agente sempre visibile, read-only */}
+          {renderListingsTable({ showAgentColumn: true, agentEditable: false })}
+
+          {selectedRun && (
+            <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
+              <button
+                disabled={page === 0}
+                onClick={() => {
+                  const p = page - 1;
+                  setPage(p);
+                  loadListingsForRun(selectedRun, false, p);
+                }}
+              >
+                ← Prev
+              </button>
+              <span className="muted">
+                Pagina {page + 1} / {totalPages}
+              </span>
+              <button
+                disabled={page + 1 >= totalPages}
+                onClick={() => {
+                  const p = page + 1;
+                  setPage(p);
+                  loadListingsForRun(selectedRun, false, p);
+                }}
+              >
+                Next →
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -1134,12 +810,7 @@ export default function App() {
             value={selectedRun?.id || ""}
             onChange={(e) => {
               const run = runs.find((r) => r.id === e.target.value);
-              if (run) {
-                setPage(0);
-                setAllRunListings([]);
-                setListings([]);
-                loadListingsForRun(run, true);
-              }
+              if (run) loadListingsForRun(run, true, 0);
             }}
           >
             <option value="">Seleziona…</option>
@@ -1151,26 +822,52 @@ export default function App() {
           </select>
 
           {selectedRun && (
-            <>
-              <FiltersRow />
+            <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
+              <input
+                placeholder="Prezzo min"
+                value={priceMin}
+                onChange={(e) => setPriceMin(e.target.value)}
+              />
+              <input
+                placeholder="Prezzo max"
+                value={priceMax}
+                onChange={(e) => setPriceMax(e.target.value)}
+              />
+              <button onClick={() => loadListingsForRun(selectedRun, true, 0)}>Applica</button>
+              <button onClick={resetFilters} style={{ background: "#e5e7eb", color: "#111" }}>
+                Reset
+              </button>
+            </div>
+          )}
 
-              {renderListingsTable({ showAgentColumn: true, agentEditable: true })}
+          {renderListingsTable({ showAgentColumn: true, agentEditable: true })}
 
-              <div style={{ display: "flex", gap: 12, marginTop: 16, alignItems: "center" }}>
-                <button disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>
-                  ← Prev
-                </button>
-                <span className="muted">
-                  Pagina {page + 1} / {totalPages}
-                </span>
-                <button
-                  disabled={page + 1 >= totalPages}
-                  onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
-                >
-                  Next →
-                </button>
-              </div>
-            </>
+          {selectedRun && (
+            <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
+              <button
+                disabled={page === 0}
+                onClick={() => {
+                  const p = page - 1;
+                  setPage(p);
+                  loadListingsForRun(selectedRun, false, p);
+                }}
+              >
+                ← Prev
+              </button>
+              <span className="muted">
+                Pagina {page + 1} / {totalPages}
+              </span>
+              <button
+                disabled={page + 1 >= totalPages}
+                onClick={() => {
+                  const p = page + 1;
+                  setPage(p);
+                  loadListingsForRun(selectedRun, false, p);
+                }}
+              >
+                Next →
+              </button>
+            </div>
           )}
         </div>
       )}
@@ -1278,7 +975,7 @@ export default function App() {
 
               <div className="kv">
                 <div className="kv-label">Data pubblicazione</div>
-                <div className="kv-value">{fmtDate((dr?.creationDate || 0) * 1000)}</div>
+                <div className="kv-value">{fmtDate(dr?.creationDate * 1000)}</div>
               </div>
             </div>
           </div>
