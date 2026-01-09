@@ -137,7 +137,7 @@ const FiltersBar = ({
         <select
           value={advertiserFilter}
           onChange={(e) => setAdvertiserFilter(e.target.value)}
-          style={{ minWidth: 200, padding: "10px 12px", borderRadius: 12, flex: "1 1 320px" }}
+          style={{ minWidth: 200, padding: "10px 12px", borderRadius: 12, flex: "1 1 200px" }}
         >
           <option value="">Agenzia/Privato (tutti)</option>
           {advertiserOptions.map((v) => (
