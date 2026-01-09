@@ -31,6 +31,48 @@ const toISOStartOfNextDayUTC = (yyyy_mm_dd) => {
   return dt.toISOString();
 };
 
+// ================= MONITOR (TL) helpers =================
+const MONITOR_WEEKS = 12;
+
+const startOfWeekUTC = (d) => {
+  const dt = new Date(d);
+  if (isNaN(dt)) return null;
+  const day = dt.getUTCDay(); // 0=Sun..6=Sat
+  const diff = (day + 6) % 7; // Monday=0
+  dt.setUTCDate(dt.getUTCDate() - diff);
+  dt.setUTCHours(0, 0, 0, 0);
+  return dt;
+};
+
+const weekKeyUTC = (d) => {
+  const w = startOfWeekUTC(d);
+  return w ? w.toISOString().slice(0, 10) : "";
+};
+
+const addWeeksUTC = (isoYmd, weeks) => {
+  const dt = new Date(`${isoYmd}T00:00:00.000Z`);
+  dt.setUTCDate(dt.getUTCDate() + weeks * 7);
+  return dt.toISOString().slice(0, 10);
+};
+
+const downloadCSV = (filename, rows) => {
+  const escape = (v) => {
+    const s = String(v ?? "");
+    if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+    return s;
+  };
+  const csv = rows.map((r) => r.map(escape).join(",")).join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+};
+
 const FiltersBar = ({
   acqFrom,
   setAcqFrom,
@@ -51,7 +93,7 @@ const FiltersBar = ({
   advertiserOptions,
   onApply,
   onReset,
-  rightSlot, // <-- NEW (opzionale)
+  rightSlot, // opzionale
 }) => {
   return (
     <div style={{ marginTop: 12 }}>
@@ -131,8 +173,7 @@ const FiltersBar = ({
         </select>
       </div>
 
-      {/* riga 2: agenzia/privato + bottoni */}
-      {/* riga 2: agenzia/privato + bottoni */}
+      {/* riga 2: agenzia/privato + bottoni (bottoni vicini al filtro) */}
       <div
         style={{
           display: "flex",
@@ -173,7 +214,7 @@ const FiltersBar = ({
         </div>
       </div>
 
-      {/* riga 3: slot a destra (sort, ecc) */}
+      {/* riga 3: sort ecc */}
       {rightSlot ? (
         <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
           {rightSlot}
@@ -182,8 +223,6 @@ const FiltersBar = ({
     </div>
   );
 };
-
-
 
 const ListingsTable = ({
   listings,
@@ -328,7 +367,7 @@ export default function App() {
   const [agency, setAgency] = useState(null);
   const [agencyLoading, setAgencyLoading] = useState(true);
 
-  const [view, setView] = useState("dashboard"); // dashboard | history | team | agents
+  const [view, setView] = useState("dashboard"); // dashboard | history | team | agents | monitor
   const [runs, setRuns] = useState([]);
   const [selectedRun, setSelectedRun] = useState(null);
 
@@ -385,6 +424,12 @@ export default function App() {
   // sort (Annunci)
   const [annSort, setAnnSort] = useState("acq_desc"); // acq_desc | acq_asc | price_asc | price_desc | adv_asc | agent_asc | agent_desc
 
+  // ================= MONITOR (TL) =================
+  const [monLoading, setMonLoading] = useState(false);
+  const [monError, setMonError] = useState("");
+  const [monWeekly, setMonWeekly] = useState([]); // [{week, newCount, runCount}]
+  const [monKpi, setMonKpi] = useState({ new7: 0, avg4w: 0 });
+
   // cache run (legacy)
   const [allRunListings, setAllRunListings] = useState([]);
 
@@ -421,7 +466,6 @@ export default function App() {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = null;
   };
-
 
   /* ================= AUTH ================= */
   useEffect(() => {
@@ -469,20 +513,29 @@ export default function App() {
 
       // 1) legacy: agents.id == auth.uid()
       let res = await tryQuery(
-        supabase.from("agents").select("id, user_id, email, role, agency_id, created_at").eq("id", uid)
+        supabase
+          .from("agents")
+          .select("id, user_id, email, role, agency_id, created_at")
+          .eq("id", uid)
       );
 
       // 2) standard: agents.user_id == auth.uid()
       if (!res.data && !res.error) {
         res = await tryQuery(
-          supabase.from("agents").select("id, user_id, email, role, agency_id, created_at").eq("user_id", uid)
+          supabase
+            .from("agents")
+            .select("id, user_id, email, role, agency_id, created_at")
+            .eq("user_id", uid)
         );
       }
 
       // 3) fallback: email
       if (!res.data && !res.error && email) {
         res = await tryQuery(
-          supabase.from("agents").select("id, user_id, email, role, agency_id, created_at").eq("email", email)
+          supabase
+            .from("agents")
+            .select("id, user_id, email, role, agency_id, created_at")
+            .eq("email", email)
         );
       }
 
@@ -556,6 +609,80 @@ export default function App() {
   useEffect(() => {
     if (agency?.id) loadRuns();
   }, [agency?.id]);
+
+  // ================= MONITOR (TL) loaders =================
+  const loadMonitorWeekly = async () => {
+    if (!agency?.id) return;
+
+    setMonLoading(true);
+    setMonError("");
+
+    try {
+      const since = new Date();
+      since.setDate(since.getDate() - MONITOR_WEEKS * 7 - 7);
+
+      const { data, error } = await supabase
+        .from("agency_runs")
+        .select("created_at, new_listings_count")
+        .eq("agency_id", agency.id)
+        .gte("created_at", since.toISOString())
+        .order("created_at", { ascending: true });
+
+      if (error) throw new Error(error.message);
+
+      const rows = data || [];
+
+      const bucket = new Map(); // week -> {newCount, runCount}
+      for (const r of rows) {
+        const wk = weekKeyUTC(r.created_at);
+        if (!wk) continue;
+        const cur = bucket.get(wk) || { newCount: 0, runCount: 0 };
+        cur.newCount += Number(r.new_listings_count || 0);
+        cur.runCount += 1;
+        bucket.set(wk, cur);
+      }
+
+      const nowW = weekKeyUTC(new Date().toISOString());
+      const startW = addWeeksUTC(nowW, -(MONITOR_WEEKS - 1));
+      const out = [];
+      for (let i = 0; i < MONITOR_WEEKS; i++) {
+        const w = addWeeksUTC(startW, i);
+        const v = bucket.get(w) || { newCount: 0, runCount: 0 };
+        out.push({ week: w, newCount: v.newCount, runCount: v.runCount });
+      }
+
+      setMonWeekly(out);
+
+      // KPI: ultimi 7 giorni (MVP: ultima settimana bucket)
+      const last = out[out.length - 1]?.newCount || 0;
+
+      // KPI: media 4 settimane
+      const last4 = out.slice(-4);
+      const avg4w = last4.reduce((sum, x) => sum + (x.newCount || 0), 0) / Math.max(1, last4.length);
+
+      setMonKpi({ new7: last, avg4w: Math.round(avg4w * 10) / 10 });
+    } catch (e) {
+      console.error("loadMonitorWeekly:", e?.message || e);
+      setMonError(e?.message || "Errore monitor");
+      setMonWeekly([]);
+      setMonKpi({ new7: 0, avg4w: 0 });
+    } finally {
+      setMonLoading(false);
+    }
+  };
+
+  const exportWeeklyCSV = () => {
+    const header = ["week_start_utc", "new_listings", "runs_count"];
+    const body = (monWeekly || []).map((r) => [r.week, r.newCount, r.runCount]);
+    downloadCSV(`monitor_weekly_${agency?.id || "agency"}.csv`, [header, ...body]);
+  };
+
+  useEffect(() => {
+    if (view === "monitor" && isTL && agency?.id) {
+      loadMonitorWeekly();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, isTL, agency?.id]);
 
   /* ================= START RUN ================= */
   const startRun = async () => {
@@ -748,7 +875,6 @@ export default function App() {
       return;
     }
 
-    // 1) run precedente (stessa agenzia)
     const { data: prevRun, error: prevErr } = await supabase
       .from("agency_runs")
       .select("id, created_at")
@@ -764,21 +890,17 @@ export default function App() {
       return;
     }
 
-    // se non esiste run precedente → tutto NEW
     if (!prevRun) {
       const { data, error } = await supabase.from("agency_run_listings").select("listing_id").eq("run_id", run.id);
-
       if (error) {
         console.error("load run listings (no prev):", error.message);
         setNewListingIds(new Set());
         return;
       }
-
       setNewListingIds(new Set((data || []).map((r) => r.listing_id)));
       return;
     }
 
-    // 2) listing run corrente
     const { data: current, error: curErr } = await supabase
       .from("agency_run_listings")
       .select("listing_id")
@@ -790,7 +912,6 @@ export default function App() {
       return;
     }
 
-    // 3) listing run precedente
     const { data: previous, error: prevListErr } = await supabase
       .from("agency_run_listings")
       .select("listing_id")
@@ -804,11 +925,9 @@ export default function App() {
 
     const prevSet = new Set((previous || []).map((r) => r.listing_id));
     const newOnes = new Set((current || []).map((r) => r.listing_id).filter((id) => !prevSet.has(id)));
-
     setNewListingIds(newOnes);
   };
 
-  // legacy: calcola NEW per run solo quando cambia run selezionata
   useEffect(() => {
     if (selectedRun?.id && agency?.id) {
       loadNewListingsForRun(selectedRun);
@@ -854,7 +973,11 @@ export default function App() {
     if (!isTL || !agency?.id || !session?.user?.id) return;
 
     if (!agentUserId) {
-      const { error } = await supabase.from("listing_assignments").delete().eq("agency_id", agency.id).eq("listing_id", listingId);
+      const { error } = await supabase
+        .from("listing_assignments")
+        .delete()
+        .eq("agency_id", agency.id)
+        .eq("listing_id", listingId);
 
       if (error) {
         console.error("delete assignment:", error.message);
@@ -926,7 +1049,6 @@ export default function App() {
 
     const ids = links.map((l) => l.listing_id);
 
-    // 1) base query (SQL: price + first_seen_at)
     let q = supabase.from("listings").select("id, price, url, raw, first_seen_at").in("id", ids);
 
     if (f.priceMin) q = q.gte("price", Number(f.priceMin));
@@ -950,7 +1072,6 @@ export default function App() {
     const rows = data || [];
     setAllAgencyListings(rows);
 
-    // NEW 7 giorni (calcolato su tutto)
     const cutoff = Date.now() - NEW_DAYS * 24 * 60 * 60 * 1000;
     const newSet7 = new Set(
       rows
@@ -962,7 +1083,6 @@ export default function App() {
     );
     setNewListingIds7d(newSet7);
 
-    // 2) assignments per tutti (serve per filtro agente)
     const assignMapAll = await (async () => {
       if (!agency?.id || !rows.length) return {};
       const { data: aData, error: aErr } = await supabase
@@ -983,7 +1103,6 @@ export default function App() {
       return m;
     })();
 
-    // 3) filtri client (contract + advertiser + agent)
     let filtered = rows;
 
     if (f.contractFilter) {
@@ -998,7 +1117,6 @@ export default function App() {
       filtered = filtered.filter((l) => (assignMapAll[l.id] || "") === f.agentFilter);
     }
 
-    // 4) sort client
     const sortArr = [...filtered];
     const safeTime = (x) => {
       const t = x?.first_seen_at ? new Date(x.first_seen_at).getTime() : 0;
@@ -1009,10 +1127,8 @@ export default function App() {
       if (sortKey === "acq_asc") return safeTime(a) - safeTime(b);
       if (sortKey === "acq_desc") return safeTime(b) - safeTime(a);
 
-      if (sortKey === "price_asc")
-        return Number(a?.price ?? 0) - Number(b?.price ?? 0);
-      if (sortKey === "price_desc")
-        return Number(b?.price ?? 0) - Number(a?.price ?? 0);
+      if (sortKey === "price_asc") return Number(a?.price ?? 0) - Number(b?.price ?? 0);
+      if (sortKey === "price_desc") return Number(b?.price ?? 0) - Number(a?.price ?? 0);
 
       if (sortKey === "adv_asc") {
         const aa = (getAdvertiserLabel(a) || "").toString();
@@ -1032,13 +1148,11 @@ export default function App() {
           : bEmail.localeCompare(aEmail, "it");
       }
 
-      // fallback: data acquisizione desc
       return safeTime(b) - safeTime(a);
     });
 
     setTotalCount(sortArr.length);
 
-    // 5) paginate client
     const p = pageOverride ?? (resetPage ? 0 : page);
     const from = p * PAGE_SIZE;
     const to = from + PAGE_SIZE;
@@ -1046,7 +1160,6 @@ export default function App() {
 
     setListings(pageRows);
 
-    // 6) assignments + notes solo pagina
     const pageListingIds = pageRows.map((x) => x.id);
     await loadAssignmentsForListingIds(pageListingIds);
     await loadNotesForListingIds(pageListingIds);
@@ -1057,7 +1170,6 @@ export default function App() {
     }
   };
 
-  // carica annunci quando entri in "history" (Annunci) o quando cambia agency
   useEffect(() => {
     if (view === "history" && agency?.id) {
       loadListingsForAgency(true, 0, null, annSort);
@@ -1084,7 +1196,10 @@ export default function App() {
         advertiserFilter,
       });
 
-    const { data: links, error: linksErr } = await supabase.from("agency_run_listings").select("listing_id").eq("run_id", run.id);
+    const { data: links, error: linksErr } = await supabase
+      .from("agency_run_listings")
+      .select("listing_id")
+      .eq("run_id", run.id);
 
     if (linksErr || !links?.length) {
       setListings([]);
@@ -1098,7 +1213,6 @@ export default function App() {
 
     const ids = links.map((l) => l.listing_id);
 
-    // 1) base query (SQL: price + first_seen_at)
     let q = supabase
       .from("listings")
       .select("id, price, url, raw, first_seen_at")
@@ -1125,7 +1239,6 @@ export default function App() {
     const rows = data || [];
     setAllRunListings(rows);
 
-    // 2) assignments per tutti (serve per filtro agente)
     const assignMapAll = await (async () => {
       if (!agency?.id || !rows.length) return {};
       const { data: aData, error: aErr } = await supabase
@@ -1146,7 +1259,6 @@ export default function App() {
       return m;
     })();
 
-    // 3) filtri client (contract + advertiser + agent)
     let filtered = rows;
 
     if (f.contractFilter) {
@@ -1163,7 +1275,6 @@ export default function App() {
 
     setTotalCount(filtered.length);
 
-    // 4) paginate client
     const p = pageOverride ?? (resetPage ? 0 : page);
     const from = p * PAGE_SIZE;
     const to = from + PAGE_SIZE;
@@ -1171,7 +1282,6 @@ export default function App() {
 
     setListings(pageRows);
 
-    // 5) assignments + notes solo pagina
     const pageListingIds = pageRows.map((x) => x.id);
     await loadAssignmentsForListingIds(pageListingIds);
     await loadNotesForListingIds(pageListingIds);
@@ -1183,32 +1293,14 @@ export default function App() {
   };
 
   const applyFilters = () => {
-    // in "history" ora = Annunci (agency_listings)
     if (view === "history") {
-      const snapshot = {
-        acqFrom,
-        acqTo,
-        priceMin,
-        priceMax,
-        contractFilter,
-        agentFilter,
-        advertiserFilter,
-      };
+      const snapshot = { acqFrom, acqTo, priceMin, priceMax, contractFilter, agentFilter, advertiserFilter };
       loadListingsForAgency(true, 0, snapshot, annSort);
       return;
     }
 
-    // legacy: filtri su run selezionata
     if (!selectedRun) return;
-    const snapshot = {
-      acqFrom,
-      acqTo,
-      priceMin,
-      priceMax,
-      contractFilter,
-      agentFilter,
-      advertiserFilter,
-    };
+    const snapshot = { acqFrom, acqTo, priceMin, priceMax, contractFilter, agentFilter, advertiserFilter };
     loadListingsForRun(selectedRun, true, 0, snapshot);
   };
 
@@ -1239,7 +1331,6 @@ export default function App() {
     if (selectedRun) loadListingsForRun(selectedRun, true, 0, empty);
   };
 
-  // autosave debounce note
   useEffect(() => {
     if (!detailsOpen || !detailsListing?.id) return;
     if (noteReadOnly) return;
@@ -1361,6 +1452,9 @@ export default function App() {
   const drawerAdvertiser = (dr?.analytics?.agencyName || dr?.analytics?.advertiser || "").toString();
   const firstImg = dr?.media?.images?.[0]?.hd || dr?.media?.images?.[0]?.sd || "";
 
+  // Monitor: max per grafico
+  const monMax = Math.max(1, ...(monWeekly || []).map((x) => Number(x.newCount || 0)));
+
   return (
     <div>
       {/* HEADER */}
@@ -1370,10 +1464,10 @@ export default function App() {
         </h2>
         <div style={{ display: "flex", gap: 12 }}>
           <button onClick={() => setView("dashboard")}>Dashboard</button>
-          {/* history ora è Annunci */}
           <button onClick={() => setView("history")}>Annunci</button>
           {isTL && <button onClick={() => setView("team")}>Gestione agenti</button>}
           {isTL && <button onClick={() => setView("agents")}>Agenti</button>}
+          {isTL && <button onClick={() => setView("monitor")}>Monitor</button>}
         </div>
       </div>
 
@@ -1388,82 +1482,81 @@ export default function App() {
         </div>
       )}
 
-      {/* ANNUNCI (view history) */}
+      {/* ANNUNCI */}
       {view === "history" && (
         <div className="card">
           <h3>Annunci</h3>
 
-<FiltersBar
-  acqFrom={acqFrom}
-  setAcqFrom={setAcqFrom}
-  acqTo={acqTo}
-  setAcqTo={setAcqTo}
-  priceMin={priceMin}
-  setPriceMin={setPriceMin}
-  priceMax={priceMax}
-  setPriceMax={setPriceMax}
-  contractFilter={contractFilter}
-  setContractFilter={setContractFilter}
-  agentFilter={agentFilter}
-  setAgentFilter={setAgentFilter}
-  advertiserFilter={advertiserFilter}
-  setAdvertiserFilter={setAdvertiserFilter}
-  contractOptions={contractOptions}
-  agencyAgents={agencyAgents}
-  advertiserOptions={advertiserOptions}
-  onApply={applyFilters}
-  onReset={resetFilters}
-  rightSlot={
-    <select
-      value={annSort}
-      onChange={(e) => {
-        const v = e.target.value;
-        setAnnSort(v);
-        const snapshot = {
-          acqFrom,
-          acqTo,
-          priceMin,
-          priceMax,
-          contractFilter,
-          agentFilter,
-          advertiserFilter,
-        };
-        loadListingsForAgency(true, 0, snapshot, v);
-      }}
-      style={{
-        width: 220,
-        maxWidth: 220,
-        minWidth: 220,
-        padding: "10px 12px",
-        borderRadius: 12,
-      }}
-    >
-      <option value="acq_desc">Data acquisizione ↓</option>
-      <option value="acq_asc">Data acquisizione ↑</option>
-      <option value="price_asc">Prezzo ↑</option>
-      <option value="price_desc">Prezzo ↓</option>
-      <option value="adv_asc">Agenzia / Privato A–Z</option>
-      <option value="agent_asc">Agente A–Z</option>
-      <option value="agent_desc">Agente Z–A</option>
-    </select>
-  }
-/>
+          <FiltersBar
+            acqFrom={acqFrom}
+            setAcqFrom={setAcqFrom}
+            acqTo={acqTo}
+            setAcqTo={setAcqTo}
+            priceMin={priceMin}
+            setPriceMin={setPriceMin}
+            priceMax={priceMax}
+            setPriceMax={setPriceMax}
+            contractFilter={contractFilter}
+            setContractFilter={setContractFilter}
+            agentFilter={agentFilter}
+            setAgentFilter={setAgentFilter}
+            advertiserFilter={advertiserFilter}
+            setAdvertiserFilter={setAdvertiserFilter}
+            contractOptions={contractOptions}
+            agencyAgents={agencyAgents}
+            advertiserOptions={advertiserOptions}
+            onApply={applyFilters}
+            onReset={resetFilters}
+            rightSlot={
+              <select
+                value={annSort}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setAnnSort(v);
+                  const snapshot = {
+                    acqFrom,
+                    acqTo,
+                    priceMin,
+                    priceMax,
+                    contractFilter,
+                    agentFilter,
+                    advertiserFilter,
+                  };
+                  loadListingsForAgency(true, 0, snapshot, v);
+                }}
+                style={{
+                  width: 220,
+                  maxWidth: 220,
+                  minWidth: 220,
+                  padding: "10px 12px",
+                  borderRadius: 12,
+                }}
+              >
+                <option value="acq_desc">Data acquisizione ↓</option>
+                <option value="acq_asc">Data acquisizione ↑</option>
+                <option value="price_asc">Prezzo ↑</option>
+                <option value="price_desc">Prezzo ↓</option>
+                <option value="adv_asc">Agenzia / Privato A–Z</option>
+                <option value="agent_asc">Agente A–Z</option>
+                <option value="agent_desc">Agente Z–A</option>
+              </select>
+            }
+          />
 
-<ListingsTable
-  listings={listings}
-  notesByListing={notesByListing}
-  assignByListing={assignByListing}
-  agencyAgents={agencyAgents}
-  agentEmailByUserId={agentEmailByUserId}
-  showAgentColumn={true}
-  agentEditable={false}
-  onChangeAssignment={upsertAssignment}
-  onOpenDetails={openDetails}
-  getContractName={getContractName}
-  getAdvertiserLabel={getAdvertiserLabel}
-  newListingIds={newListingIds7d}
-/>
-
+          <ListingsTable
+            listings={listings}
+            notesByListing={notesByListing}
+            assignByListing={assignByListing}
+            agencyAgents={agencyAgents}
+            agentEmailByUserId={agentEmailByUserId}
+            showAgentColumn={true}
+            agentEditable={false}
+            onChangeAssignment={upsertAssignment}
+            onOpenDetails={openDetails}
+            getContractName={getContractName}
+            getAdvertiserLabel={getAdvertiserLabel}
+            newListingIds={newListingIds7d}
+          />
 
           <div style={{ display: "flex", gap: 12, marginTop: 16, alignItems: "center" }}>
             <button
@@ -1507,6 +1600,87 @@ export default function App() {
             >
               Next →
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* MONITOR (solo TL) */}
+      {view === "monitor" && isTL && (
+        <div className="card">
+          <div style={{ display: "flex", gap: 12, alignItems: "center", justifyContent: "space-between" }}>
+            <h3 style={{ margin: 0 }}>Monitor (12 settimane)</h3>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={loadMonitorWeekly} disabled={monLoading}>
+                {monLoading ? "Carico..." : "Ricarica"}
+              </button>
+              <button onClick={exportWeeklyCSV} disabled={!monWeekly?.length}>
+                Export CSV
+              </button>
+            </div>
+          </div>
+
+          {monError && <div className="muted" style={{ marginTop: 10 }}>Errore: {monError}</div>}
+
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 14 }}>
+            <div className="card" style={{ margin: 0, flex: "1 1 220px" }}>
+              <div className="muted" style={{ fontWeight: 700 }}>Nuovi (ultima settimana)</div>
+              <div style={{ fontSize: 28, fontWeight: 800, marginTop: 6 }}>{monKpi.new7}</div>
+            </div>
+            <div className="card" style={{ margin: 0, flex: "1 1 220px" }}>
+              <div className="muted" style={{ fontWeight: 700 }}>Media nuovi (ultime 4 settimane)</div>
+              <div style={{ fontSize: 28, fontWeight: 800, marginTop: 6 }}>{monKpi.avg4w}</div>
+            </div>
+            <div className="card" style={{ margin: 0, flex: "1 1 220px" }}>
+              <div className="muted" style={{ fontWeight: 700 }}>Run nel periodo</div>
+              <div style={{ fontSize: 28, fontWeight: 800, marginTop: 6 }}>
+                {(monWeekly || []).reduce((s, x) => s + Number(x.runCount || 0), 0)}
+              </div>
+            </div>
+          </div>
+
+          <div style={{ marginTop: 16 }}>
+            <div className="muted" style={{ fontWeight: 700, marginBottom: 8 }}>
+              Nuovi annunci per settimana
+            </div>
+
+            <div
+              style={{
+                display: "grid",
+                gap: 8,
+              }}
+            >
+              {(monWeekly || []).map((w) => {
+                const val = Number(w.newCount || 0);
+                const pct = Math.round((val / monMax) * 100);
+                return (
+                  <div key={w.week} style={{ display: "grid", gridTemplateColumns: "120px 1fr 60px", gap: 10, alignItems: "center" }}>
+                    <div className="muted" style={{ fontWeight: 700 }}>{w.week}</div>
+                    <div
+                      style={{
+                        height: 12,
+                        borderRadius: 999,
+                        background: "#e5e7eb",
+                        overflow: "hidden",
+                      }}
+                      title={`${val} nuovi`}
+                    >
+                      <div
+                        style={{
+                          height: "100%",
+                          width: `${pct}%`,
+                          background: "#111827",
+                        }}
+                      />
+                    </div>
+                    <div style={{ textAlign: "right", fontWeight: 800 }}>{val}</div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="muted" style={{ marginTop: 10 }}>
+              Nota: i dati arrivano da <b>agency_runs.new_listings_count</b> (nessun raw).
+            </div>
           </div>
         </div>
       )}
