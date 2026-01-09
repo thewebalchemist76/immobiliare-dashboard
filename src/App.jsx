@@ -132,6 +132,7 @@ const FiltersBar = ({
       </div>
 
       {/* riga 2: agenzia/privato + bottoni */}
+      {/* riga 2: agenzia/privato + bottoni */}
       <div
         style={{
           display: "flex",
@@ -144,8 +145,6 @@ const FiltersBar = ({
         <select
           value={advertiserFilter}
           onChange={(e) => setAdvertiserFilter(e.target.value)}
-          // prima era flex: "1 1 ..." quindi si allargava a tutta riga.
-          // Qui lo rendiamo "fisso" e corto.
           style={{
             width: 360,
             maxWidth: 360,
@@ -166,7 +165,7 @@ const FiltersBar = ({
           ))}
         </select>
 
-        <div style={{ display: "flex", gap: 10, marginLeft: "auto" }}>
+        <div style={{ display: "flex", gap: 10 }}>
           <button onClick={onApply}>Applica</button>
           <button onClick={onReset} style={{ background: "#e5e7eb", color: "#111" }}>
             Reset
