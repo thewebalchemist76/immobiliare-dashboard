@@ -110,7 +110,18 @@ const FiltersBar = ({
         <select
           value={agentFilter}
           onChange={(e) => setAgentFilter(e.target.value)}
-          style={{ minWidth: 260, padding: "10px 12px", borderRadius: 12 }}
+          // NB: minWidth spesso "sembra uguale" perché il contenuto è lungo e/o flex lo allarga.
+          // Qui forziamo una larghezza più piccola + overflow ellipsis.
+          style={{
+            width: 200,
+            maxWidth: 200,
+            minWidth: 200,
+            padding: "10px 12px",
+            borderRadius: 12,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
         >
           <option value="">Agente (tutti)</option>
           {agencyAgents.map((a) => (
@@ -119,9 +130,6 @@ const FiltersBar = ({
             </option>
           ))}
         </select>
-
-        {/* slot a destra (sort, ecc) */}
-        {rightSlot ? <div style={{ marginLeft: "auto" }}>{rightSlot}</div> : null}
       </div>
 
       {/* riga 2: agenzia/privato + bottoni */}
@@ -154,9 +162,17 @@ const FiltersBar = ({
           </button>
         </div>
       </div>
+
+      {/* riga 3: slot a destra (sort, ecc) */}
+      {rightSlot ? (
+        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
+          {rightSlot}
+        </div>
+      ) : null}
     </div>
   );
 };
+
 
 const ListingsTable = ({
   listings,
