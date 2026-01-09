@@ -165,6 +165,7 @@ const ListingsTable = ({
   onOpenDetails,
   getContractName,
   getAdvertiserLabel,
+  newListingIds, // <-- NEW
 }) => {
   return (
     <div className="table-wrap">
@@ -195,12 +196,32 @@ const ListingsTable = ({
             const assignedUserId = assignByListing?.[l.id] || "";
             const assignedEmail = assignedUserId ? agentEmailByUserId?.[assignedUserId] : "";
 
+            const isNew = !!newListingIds && newListingIds.has(l.id); // <-- NEW
+
             return (
               <tr key={l.id}>
                 <td>{fmtDate(l.first_seen_at)}</td>
                 <td>{fmtDate((r.lastModified || 0) * 1000)}</td>
                 <td>
-                  <div style={{ fontWeight: 600 }}>{safe(r.title)}</div>
+                  <div style={{ fontWeight: 600, display: "flex", alignItems: "center", gap: 8 }}>
+                    <span>{safe(r.title)}</span>
+                    {isNew && (
+                      <span
+                        style={{
+                          fontSize: 12,
+                          fontWeight: 800,
+                          padding: "3px 8px",
+                          borderRadius: 999,
+                          background: "#111827",
+                          color: "white",
+                          letterSpacing: 0.5,
+                        }}
+                        title="Presente in questa run ma non nella precedente"
+                      >
+                        NEW
+                      </span>
+                    )}
+                  </div>
                   <div className="muted" style={{ marginTop: 4 }}>
                     {rowPortal}{" "}
                     {l.url && (
@@ -307,6 +328,9 @@ export default function App() {
   // AGENTS mapping + dropdown TL
   const [agencyAgents, setAgencyAgents] = useState([]); // [{user_id,email,role}]
   const [assignByListing, setAssignByListing] = useState({}); // { [listing_id]: agent_user_id }
+
+  // ===== NEW badge: set di listing_id NEW nella run selezionata =====
+  const [newListingIds, setNewListingIds] = useState(new Set());
 
   // ===== TAB "AGENTI" (INVITI) =====
   const [inviteFirstName, setInviteFirstName] = useState("");
@@ -520,7 +544,6 @@ export default function App() {
       loadRuns();
     }
   };
-
   /* ================= NOTES ================= */
   const loadNotesForListingIds = async (listingIds) => {
     if (!session?.user?.id) return;
@@ -683,6 +706,90 @@ export default function App() {
     });
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [allRunListings]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* ================= NEW badge: calcolo NEW per run corrente vs run precedente ================= */
+  const loadNewListingsForRun = async (run) => {
+    if (!run || !agency?.id) {
+      setNewListingIds(new Set());
+      return;
+    }
+
+    // 1) run precedente (stessa agenzia)
+    const { data: prevRun, error: prevErr } = await supabase
+      .from("agency_runs")
+      .select("id, created_at")
+      .eq("agency_id", agency.id)
+      .lt("created_at", run.created_at)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (prevErr) {
+      console.error("load prevRun:", prevErr.message);
+      setNewListingIds(new Set());
+      return;
+    }
+
+    // se non esiste run precedente → tutto NEW
+    if (!prevRun) {
+      const { data, error } = await supabase
+        .from("agency_run_listings")
+        .select("listing_id")
+        .eq("run_id", run.id);
+
+      if (error) {
+        console.error("load run listings (no prev):", error.message);
+        setNewListingIds(new Set());
+        return;
+      }
+
+      setNewListingIds(new Set((data || []).map((r) => r.listing_id)));
+      return;
+    }
+
+    // 2) listing run corrente
+    const { data: current, error: curErr } = await supabase
+      .from("agency_run_listings")
+      .select("listing_id")
+      .eq("run_id", run.id);
+
+    if (curErr) {
+      console.error("load current run listings:", curErr.message);
+      setNewListingIds(new Set());
+      return;
+    }
+
+    // 3) listing run precedente
+    const { data: previous, error: prevListErr } = await supabase
+      .from("agency_run_listings")
+      .select("listing_id")
+      .eq("run_id", prevRun.id);
+
+    if (prevListErr) {
+      console.error("load previous run listings:", prevListErr.message);
+      setNewListingIds(new Set());
+      return;
+    }
+
+    const prevSet = new Set((previous || []).map((r) => r.listing_id));
+    const newOnes = new Set(
+      (current || [])
+        .map((r) => r.listing_id)
+        .filter((id) => !prevSet.has(id))
+    );
+
+    setNewListingIds(newOnes);
+  };
+
+  // calcola NEW solo quando cambia run selezionata (non su paginazione/filtri)
+  useEffect(() => {
+    if (selectedRun?.id && agency?.id) {
+      loadNewListingsForRun(selectedRun);
+    } else {
+      setNewListingIds(new Set());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedRun?.id, agency?.id]);
 
   /* ================= ASSIGNMENTS ================= */
   const loadAssignmentsForListingIds = async (listingIds) => {
@@ -1120,6 +1227,7 @@ export default function App() {
             onOpenDetails={openDetails}
             getContractName={getContractName}
             getAdvertiserLabel={getAdvertiserLabel}
+            newListingIds={newListingIds}
           />
 
           {selectedRun && (
@@ -1208,6 +1316,7 @@ export default function App() {
             onOpenDetails={openDetails}
             getContractName={getContractName}
             getAdvertiserLabel={getAdvertiserLabel}
+            newListingIds={newListingIds}
           />
 
           {selectedRun && (
