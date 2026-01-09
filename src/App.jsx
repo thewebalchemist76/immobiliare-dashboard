@@ -110,8 +110,6 @@ const FiltersBar = ({
         <select
           value={agentFilter}
           onChange={(e) => setAgentFilter(e.target.value)}
-          // NB: minWidth spesso "sembra uguale" perché il contenuto è lungo e/o flex lo allarga.
-          // Qui forziamo una larghezza più piccola + overflow ellipsis.
           style={{
             width: 200,
             maxWidth: 200,
@@ -121,6 +119,7 @@ const FiltersBar = ({
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
+            flex: "0 0 auto",
           }}
         >
           <option value="">Agente (tutti)</option>
@@ -145,7 +144,19 @@ const FiltersBar = ({
         <select
           value={advertiserFilter}
           onChange={(e) => setAdvertiserFilter(e.target.value)}
-          style={{ minWidth: 200, padding: "10px 12px", borderRadius: 12, flex: "1 1 200px" }}
+          // prima era flex: "1 1 ..." quindi si allargava a tutta riga.
+          // Qui lo rendiamo "fisso" e corto.
+          style={{
+            width: 360,
+            maxWidth: 360,
+            minWidth: 360,
+            padding: "10px 12px",
+            borderRadius: 12,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            flex: "0 0 auto",
+          }}
         >
           <option value="">Agenzia/Privato (tutti)</option>
           {advertiserOptions.map((v) => (
@@ -172,6 +183,7 @@ const FiltersBar = ({
     </div>
   );
 };
+
 
 
 const ListingsTable = ({
@@ -372,7 +384,7 @@ export default function App() {
   const [advertiserFilter, setAdvertiserFilter] = useState(""); // label "Agenzia: X" / "Privato: Y"
 
   // sort (Annunci)
-  const [annSort, setAnnSort] = useState("acq_desc"); // acq_desc | acq_asc | price_asc | price_desc | adv_asc
+  const [annSort, setAnnSort] = useState("acq_desc"); // acq_desc | acq_asc | price_asc | price_desc | adv_asc | agent_asc | agent_desc
 
   // cache run (legacy)
   const [allRunListings, setAllRunListings] = useState([]);
@@ -410,6 +422,7 @@ export default function App() {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = null;
   };
+
 
   /* ================= AUTH ================= */
   useEffect(() => {
@@ -997,8 +1010,10 @@ export default function App() {
       if (sortKey === "acq_asc") return safeTime(a) - safeTime(b);
       if (sortKey === "acq_desc") return safeTime(b) - safeTime(a);
 
-      if (sortKey === "price_asc") return Number(a?.price ?? 0) - Number(b?.price ?? 0);
-      if (sortKey === "price_desc") return Number(b?.price ?? 0) - Number(a?.price ?? 0);
+      if (sortKey === "price_asc")
+        return Number(a?.price ?? 0) - Number(b?.price ?? 0);
+      if (sortKey === "price_desc")
+        return Number(b?.price ?? 0) - Number(a?.price ?? 0);
 
       if (sortKey === "adv_asc") {
         const aa = (getAdvertiserLabel(a) || "").toString();
@@ -1006,6 +1021,19 @@ export default function App() {
         return aa.localeCompare(bb, "it");
       }
 
+      if (sortKey === "agent_asc" || sortKey === "agent_desc") {
+        const aAgentId = assignMapAll?.[a.id] || "";
+        const bAgentId = assignMapAll?.[b.id] || "";
+
+        const aEmail = agentEmailByUserId?.[aAgentId] || "";
+        const bEmail = agentEmailByUserId?.[bAgentId] || "";
+
+        return sortKey === "agent_asc"
+          ? aEmail.localeCompare(bEmail, "it")
+          : bEmail.localeCompare(aEmail, "it");
+      }
+
+      // fallback: data acquisizione desc
       return safeTime(b) - safeTime(a);
     });
 
@@ -1366,68 +1394,77 @@ export default function App() {
         <div className="card">
           <h3>Annunci</h3>
 
-          <FiltersBar
-            acqFrom={acqFrom}
-            setAcqFrom={setAcqFrom}
-            acqTo={acqTo}
-            setAcqTo={setAcqTo}
-            priceMin={priceMin}
-            setPriceMin={setPriceMin}
-            priceMax={priceMax}
-            setPriceMax={setPriceMax}
-            contractFilter={contractFilter}
-            setContractFilter={setContractFilter}
-            agentFilter={agentFilter}
-            setAgentFilter={setAgentFilter}
-            advertiserFilter={advertiserFilter}
-            setAdvertiserFilter={setAdvertiserFilter}
-            contractOptions={contractOptions}
-            agencyAgents={agencyAgents}
-            advertiserOptions={advertiserOptions}
-            onApply={applyFilters}
-            onReset={resetFilters}
-            rightSlot={
-              <select
-                value={annSort}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setAnnSort(v);
-                  const snapshot = {
-                    acqFrom,
-                    acqTo,
-                    priceMin,
-                    priceMax,
-                    contractFilter,
-                    agentFilter,
-                    advertiserFilter,
-                  };
-                  loadListingsForAgency(true, 0, snapshot, v);
-                }}
-                style={{ minWidth: 240, padding: "10px 12px", borderRadius: 12 }}
-              >
-                <option value="acq_desc">Data acquisizione ↓</option>
-                <option value="acq_asc">Data acquisizione ↑</option>
-                <option value="price_asc">Prezzo ↑</option>
-                <option value="price_desc">Prezzo ↓</option>
-                <option value="adv_asc">Agenzia / Privato A–Z</option>
-              </select>
-            }
-          />
+<FiltersBar
+  acqFrom={acqFrom}
+  setAcqFrom={setAcqFrom}
+  acqTo={acqTo}
+  setAcqTo={setAcqTo}
+  priceMin={priceMin}
+  setPriceMin={setPriceMin}
+  priceMax={priceMax}
+  setPriceMax={setPriceMax}
+  contractFilter={contractFilter}
+  setContractFilter={setContractFilter}
+  agentFilter={agentFilter}
+  setAgentFilter={setAgentFilter}
+  advertiserFilter={advertiserFilter}
+  setAdvertiserFilter={setAdvertiserFilter}
+  contractOptions={contractOptions}
+  agencyAgents={agencyAgents}
+  advertiserOptions={advertiserOptions}
+  onApply={applyFilters}
+  onReset={resetFilters}
+  rightSlot={
+    <select
+      value={annSort}
+      onChange={(e) => {
+        const v = e.target.value;
+        setAnnSort(v);
+        const snapshot = {
+          acqFrom,
+          acqTo,
+          priceMin,
+          priceMax,
+          contractFilter,
+          agentFilter,
+          advertiserFilter,
+        };
+        loadListingsForAgency(true, 0, snapshot, v);
+      }}
+      style={{
+        width: 220,
+        maxWidth: 220,
+        minWidth: 220,
+        padding: "10px 12px",
+        borderRadius: 12,
+      }}
+    >
+      <option value="acq_desc">Data acquisizione ↓</option>
+      <option value="acq_asc">Data acquisizione ↑</option>
+      <option value="price_asc">Prezzo ↑</option>
+      <option value="price_desc">Prezzo ↓</option>
+      <option value="adv_asc">Agenzia / Privato A–Z</option>
+      <option value="agent_asc">Agente A–Z</option>
+      <option value="agent_desc">Agente Z–A</option>
+    </select>
+  }
+/>
 
-          <ListingsTable
-            listings={listings}
-            notesByListing={notesByListing}
-            assignByListing={assignByListing}
-            agencyAgents={agencyAgents}
-            agentEmailByUserId={agentEmailByUserId}
-            showAgentColumn={true}
-            agentEditable={false}
-            onChangeAssignment={upsertAssignment}
-            onOpenDetails={openDetails}
-            getContractName={getContractName}
-            getAdvertiserLabel={getAdvertiserLabel}
-            newListingIds={newListingIds7d}
-          />
+<ListingsTable
+  listings={listings}
+  notesByListing={notesByListing}
+  assignByListing={assignByListing}
+  agencyAgents={agencyAgents}
+  agentEmailByUserId={agentEmailByUserId}
+  showAgentColumn={true}
+  agentEditable={false}
+  onChangeAssignment={upsertAssignment}
+  onOpenDetails={openDetails}
+  getContractName={getContractName}
+  getAdvertiserLabel={getAdvertiserLabel}
+  newListingIds={newListingIds7d}
+/>
+
 
           <div style={{ display: "flex", gap: 12, marginTop: 16, alignItems: "center" }}>
             <button
