@@ -1,9 +1,8 @@
-// App.jsx
+// src/App.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "./supabase";
 import "./App.css";
 import MonitorMarket from "./MonitorMarket";
-
 
 const PAGE_SIZE = 20;
 const NEW_DAYS = 7;
@@ -33,7 +32,47 @@ const toISOStartOfNextDayUTC = (yyyy_mm_dd) => {
   return dt.toISOString();
 };
 
+// ================= MONITOR (TL) helpers =================
+const MONITOR_WEEKS = 12;
 
+const startOfWeekUTC = (d) => {
+  const dt = new Date(d);
+  if (isNaN(dt)) return null;
+  const day = dt.getUTCDay(); // 0=Sun..6=Sat
+  const diff = (day + 6) % 7; // Monday=0
+  dt.setUTCDate(dt.getUTCDate() - diff);
+  dt.setUTCHours(0, 0, 0, 0);
+  return dt;
+};
+
+const weekKeyUTC = (d) => {
+  const w = startOfWeekUTC(d);
+  return w ? w.toISOString().slice(0, 10) : "";
+};
+
+const addWeeksUTC = (isoYmd, weeks) => {
+  const dt = new Date(`${isoYmd}T00:00:00.000Z`);
+  dt.setUTCDate(dt.getUTCDate() + weeks * 7);
+  return dt.toISOString().slice(0, 10);
+};
+
+const downloadCSV = (filename, rows) => {
+  const escape = (v) => {
+    const s = String(v ?? "");
+    if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+    return s;
+  };
+  const csv = rows.map((r) => r.map(escape).join(",")).join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+};
 
 const FiltersBar = ({
   acqFrom,
@@ -55,7 +94,7 @@ const FiltersBar = ({
   advertiserOptions,
   onApply,
   onReset,
-  rightSlot, // opzionale
+  rightSlot,
 }) => {
   return (
     <div style={{ marginTop: 12 }}>
@@ -135,7 +174,7 @@ const FiltersBar = ({
         </select>
       </div>
 
-      {/* riga 2: agenzia/privato + bottoni (bottoni vicini al filtro) */}
+      {/* riga 2: agenzia/privato + bottoni */}
       <div
         style={{
           display: "flex",
@@ -176,7 +215,7 @@ const FiltersBar = ({
         </div>
       </div>
 
-      {/* riga 3: sort ecc */}
+      {/* riga 3: sort */}
       {rightSlot ? (
         <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
           {rightSlot}
@@ -198,7 +237,7 @@ const ListingsTable = ({
   onOpenDetails,
   getContractName,
   getAdvertiserLabel,
-  newListingIds, // Set
+  newListingIds,
 }) => {
   return (
     <div className="table-wrap">
@@ -297,9 +336,7 @@ const ListingsTable = ({
                 <td>{r?.geography?.street || ""}</td>
                 <td>{r?.analytics?.macrozone || ""}</td>
                 <td>
-                  <div className="note-cell">
-                    {noteSnippet ? noteSnippet : <span className="muted">—</span>}
-                  </div>
+                  <div className="note-cell">{noteSnippet ? noteSnippet : <span className="muted">—</span>}</div>
                 </td>
                 <td style={{ textAlign: "right" }}>
                   <button className="btn-sm" onClick={() => onOpenDetails(l)}>
@@ -331,7 +368,7 @@ export default function App() {
 
   const [view, setView] = useState("dashboard"); // dashboard | history | team | agents | monitor
   const [runs, setRuns] = useState([]);
-  const [selectedRun, setSelectedRun] = useState(null);
+  const [selectedRun, setSelectedRun] = useState(null); // legacy (rimane)
 
   // LISTINGS current page
   const [listings, setListings] = useState([]);
@@ -361,7 +398,7 @@ export default function App() {
   const [agencyAgents, setAgencyAgents] = useState([]); // [{user_id,email,role}]
   const [assignByListing, setAssignByListing] = useState({}); // { [listing_id]: agent_user_id }
 
-  // ===== NEW badge (run-based, lasciato intatto per TEAM/HISTORY legacy) =====
+  // ===== NEW badge (run-based, legacy) =====
   const [newListingIds, setNewListingIds] = useState(new Set());
 
   // ===== NEW badge (Annunci: ultimi 7 giorni) =====
@@ -375,22 +412,19 @@ export default function App() {
   const [inviteMsg, setInviteMsg] = useState("");
 
   // ===== FILTRI (draft + apply) =====
-  const [acqFrom, setAcqFrom] = useState(""); // yyyy-mm-dd
-  const [acqTo, setAcqTo] = useState(""); // yyyy-mm-dd
+  const [acqFrom, setAcqFrom] = useState("");
+  const [acqTo, setAcqTo] = useState("");
   const [priceMin, setPriceMin] = useState("");
   const [priceMax, setPriceMax] = useState("");
-  const [contractFilter, setContractFilter] = useState(""); // contract name
-  const [agentFilter, setAgentFilter] = useState(""); // agent_user_id
-  const [advertiserFilter, setAdvertiserFilter] = useState(""); // label "Agenzia: X" / "Privato: Y"
+  const [contractFilter, setContractFilter] = useState("");
+  const [agentFilter, setAgentFilter] = useState("");
+  const [advertiserFilter, setAdvertiserFilter] = useState("");
 
   // sort (Annunci)
   const [annSort, setAnnSort] = useState("acq_desc"); // acq_desc | acq_asc | price_asc | price_desc | adv_asc | agent_asc | agent_desc
 
-
-
-  // cache run (legacy)
+  // legacy cache run
   const [allRunListings, setAllRunListings] = useState([]);
-
   // cache annunci (tutti listing unici agenzia)
   const [allAgencyListings, setAllAgencyListings] = useState([]);
 
@@ -471,29 +505,20 @@ export default function App() {
 
       // 1) legacy: agents.id == auth.uid()
       let res = await tryQuery(
-        supabase
-          .from("agents")
-          .select("id, user_id, email, role, agency_id, created_at")
-          .eq("id", uid)
+        supabase.from("agents").select("id, user_id, email, role, agency_id, created_at").eq("id", uid)
       );
 
       // 2) standard: agents.user_id == auth.uid()
       if (!res.data && !res.error) {
         res = await tryQuery(
-          supabase
-            .from("agents")
-            .select("id, user_id, email, role, agency_id, created_at")
-            .eq("user_id", uid)
+          supabase.from("agents").select("id, user_id, email, role, agency_id, created_at").eq("user_id", uid)
         );
       }
 
       // 3) fallback: email
       if (!res.data && !res.error && email) {
         res = await tryQuery(
-          supabase
-            .from("agents")
-            .select("id, user_id, email, role, agency_id, created_at")
-            .eq("email", email)
+          supabase.from("agents").select("id, user_id, email, role, agency_id, created_at").eq("email", email)
         );
       }
 
@@ -546,7 +571,7 @@ export default function App() {
 
   const isTL = agentProfile?.role === "tl";
 
-  /* ================= RUNS ================= */
+  /* ================= RUNS (legacy, rimane) ================= */
   const loadRuns = async () => {
     if (!agency?.id) return;
 
@@ -567,8 +592,6 @@ export default function App() {
   useEffect(() => {
     if (agency?.id) loadRuns();
   }, [agency?.id]);
-
-  
 
   /* ================= START RUN ================= */
   const startRun = async () => {
@@ -716,7 +739,7 @@ export default function App() {
   const getAdvertiserLabel = (l) => {
     const r = l?.raw || {};
     const a = r?.analytics || {};
-    const advertiser = (a?.advertiser || "").toLowerCase(); // "agenzia" / "privato"
+    const advertiser = (a?.advertiser || "").toLowerCase();
 
     const agencyName = a?.agencyName || r?.analytics?.agencyName || r?.contacts?.agencyName || "";
 
@@ -917,10 +940,7 @@ export default function App() {
 
     const sortKey = sortOverride || annSort;
 
-    const { data: links, error: linksErr } = await supabase
-      .from("agency_listings")
-      .select("listing_id")
-      .eq("agency_id", agency.id);
+    const { data: links, error: linksErr } = await supabase.from("agency_listings").select("listing_id").eq("agency_id", agency.id);
 
     if (linksErr || !links?.length) {
       setListings([]);
@@ -1025,13 +1045,9 @@ export default function App() {
       if (sortKey === "agent_asc" || sortKey === "agent_desc") {
         const aAgentId = assignMapAll?.[a.id] || "";
         const bAgentId = assignMapAll?.[b.id] || "";
-
         const aEmail = agentEmailByUserId?.[aAgentId] || "";
         const bEmail = agentEmailByUserId?.[bAgentId] || "";
-
-        return sortKey === "agent_asc"
-          ? aEmail.localeCompare(bEmail, "it")
-          : bEmail.localeCompare(aEmail, "it");
+        return sortKey === "agent_asc" ? aEmail.localeCompare(bEmail, "it") : bEmail.localeCompare(aEmail, "it");
       }
 
       return safeTime(b) - safeTime(a);
@@ -1057,7 +1073,7 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (view === "history" && agency?.id) {
+    if ((view === "history" || view === "team") && agency?.id) {
       loadListingsForAgency(true, 0, null, annSort);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1082,10 +1098,7 @@ export default function App() {
         advertiserFilter,
       });
 
-    const { data: links, error: linksErr } = await supabase
-      .from("agency_run_listings")
-      .select("listing_id")
-      .eq("run_id", run.id);
+    const { data: links, error: linksErr } = await supabase.from("agency_run_listings").select("listing_id").eq("run_id", run.id);
 
     if (linksErr || !links?.length) {
       setListings([]);
@@ -1099,11 +1112,7 @@ export default function App() {
 
     const ids = links.map((l) => l.listing_id);
 
-    let q = supabase
-      .from("listings")
-      .select("id, price, url, raw, first_seen_at")
-      .in("id", ids)
-      .order("price", { ascending: true });
+    let q = supabase.from("listings").select("id, price, url, raw, first_seen_at").in("id", ids).order("price", { ascending: true });
 
     if (f.priceMin) q = q.gte("price", Number(f.priceMin));
     if (f.priceMax) q = q.lte("price", Number(f.priceMax));
@@ -1179,7 +1188,7 @@ export default function App() {
   };
 
   const applyFilters = () => {
-    if (view === "history") {
+    if (view === "history" || view === "team") {
       const snapshot = { acqFrom, acqTo, priceMin, priceMax, contractFilter, agentFilter, advertiserFilter };
       loadListingsForAgency(true, 0, snapshot, annSort);
       return;
@@ -1209,7 +1218,7 @@ export default function App() {
     setAgentFilter("");
     setAdvertiserFilter("");
 
-    if (view === "history") {
+    if (view === "history" || view === "team") {
       loadListingsForAgency(true, 0, empty, annSort);
       return;
     }
@@ -1338,7 +1347,6 @@ export default function App() {
   const drawerAdvertiser = (dr?.analytics?.agencyName || dr?.analytics?.advertiser || "").toString();
   const firstImg = dr?.media?.images?.[0]?.hd || dr?.media?.images?.[0]?.sd || "";
 
-  
   return (
     <div>
       {/* HEADER */}
@@ -1397,24 +1405,10 @@ export default function App() {
                 onChange={(e) => {
                   const v = e.target.value;
                   setAnnSort(v);
-                  const snapshot = {
-                    acqFrom,
-                    acqTo,
-                    priceMin,
-                    priceMax,
-                    contractFilter,
-                    agentFilter,
-                    advertiserFilter,
-                  };
+                  const snapshot = { acqFrom, acqTo, priceMin, priceMax, contractFilter, agentFilter, advertiserFilter };
                   loadListingsForAgency(true, 0, snapshot, v);
                 }}
-                style={{
-                  width: 220,
-                  maxWidth: 220,
-                  minWidth: 220,
-                  padding: "10px 12px",
-                  borderRadius: 12,
-                }}
+                style={{ width: 220, maxWidth: 220, minWidth: 220, padding: "10px 12px", borderRadius: 12 }}
               >
                 <option value="acq_desc">Data acquisizione ↓</option>
                 <option value="acq_asc">Data acquisizione ↑</option>
@@ -1448,15 +1442,7 @@ export default function App() {
               onClick={() => {
                 const p = page - 1;
                 setPage(p);
-                const snapshot = {
-                  acqFrom,
-                  acqTo,
-                  priceMin,
-                  priceMax,
-                  contractFilter,
-                  agentFilter,
-                  advertiserFilter,
-                };
+                const snapshot = { acqFrom, acqTo, priceMin, priceMax, contractFilter, agentFilter, advertiserFilter };
                 loadListingsForAgency(false, p, snapshot, annSort);
               }}
             >
@@ -1470,15 +1456,7 @@ export default function App() {
               onClick={() => {
                 const p = page + 1;
                 setPage(p);
-                const snapshot = {
-                  acqFrom,
-                  acqTo,
-                  priceMin,
-                  priceMax,
-                  contractFilter,
-                  agentFilter,
-                  advertiserFilter,
-                };
+                const snapshot = { acqFrom, acqTo, priceMin, priceMax, contractFilter, agentFilter, advertiserFilter };
                 loadListingsForAgency(false, p, snapshot, annSort);
               }}
             >
@@ -1488,51 +1466,52 @@ export default function App() {
         </div>
       )}
 
-      
-
-      {/* TEAM (solo TL) */}
+      {/* TEAM (solo TL) - ORA IDENTICO AD "ANNUNCI", MA CON ASSEGNAZIONE EDITABILE */}
       {view === "team" && isTL && (
         <div className="card">
           <h3>Gestione agenti</h3>
 
-          <select
-            value={selectedRun?.id || ""}
-            onChange={(e) => {
-              const run = runs.find((r) => r.id === e.target.value);
-              if (run) loadListingsForRun(run, true, 0);
-            }}
-          >
-            <option value="">Seleziona…</option>
-            {runs.map((r) => (
-              <option key={r.id} value={r.id}>
-                {new Date(r.created_at).toLocaleString()} – {r.new_listings_count} nuovi
-              </option>
-            ))}
-          </select>
-
-          {selectedRun && (
-            <FiltersBar
-              acqFrom={acqFrom}
-              setAcqFrom={setAcqFrom}
-              acqTo={acqTo}
-              setAcqTo={setAcqTo}
-              priceMin={priceMin}
-              setPriceMin={setPriceMin}
-              priceMax={priceMax}
-              setPriceMax={setPriceMax}
-              contractFilter={contractFilter}
-              setContractFilter={setContractFilter}
-              agentFilter={agentFilter}
-              setAgentFilter={setAgentFilter}
-              advertiserFilter={advertiserFilter}
-              setAdvertiserFilter={setAdvertiserFilter}
-              contractOptions={contractOptions}
-              agencyAgents={agencyAgents}
-              advertiserOptions={advertiserOptions}
-              onApply={applyFilters}
-              onReset={resetFilters}
-            />
-          )}
+          <FiltersBar
+            acqFrom={acqFrom}
+            setAcqFrom={setAcqFrom}
+            acqTo={acqTo}
+            setAcqTo={setAcqTo}
+            priceMin={priceMin}
+            setPriceMin={setPriceMin}
+            priceMax={priceMax}
+            setPriceMax={setPriceMax}
+            contractFilter={contractFilter}
+            setContractFilter={setContractFilter}
+            agentFilter={agentFilter}
+            setAgentFilter={setAgentFilter}
+            advertiserFilter={advertiserFilter}
+            setAdvertiserFilter={setAdvertiserFilter}
+            contractOptions={contractOptions}
+            agencyAgents={agencyAgents}
+            advertiserOptions={advertiserOptions}
+            onApply={applyFilters}
+            onReset={resetFilters}
+            rightSlot={
+              <select
+                value={annSort}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setAnnSort(v);
+                  const snapshot = { acqFrom, acqTo, priceMin, priceMax, contractFilter, agentFilter, advertiserFilter };
+                  loadListingsForAgency(true, 0, snapshot, v);
+                }}
+                style={{ width: 220, maxWidth: 220, minWidth: 220, padding: "10px 12px", borderRadius: 12 }}
+              >
+                <option value="acq_desc">Data acquisizione ↓</option>
+                <option value="acq_asc">Data acquisizione ↑</option>
+                <option value="price_asc">Prezzo ↑</option>
+                <option value="price_desc">Prezzo ↓</option>
+                <option value="adv_asc">Agenzia / Privato A–Z</option>
+                <option value="agent_asc">Agente A–Z</option>
+                <option value="agent_desc">Agente Z–A</option>
+              </select>
+            }
+          />
 
           <ListingsTable
             listings={listings}
@@ -1546,39 +1525,38 @@ export default function App() {
             onOpenDetails={openDetails}
             getContractName={getContractName}
             getAdvertiserLabel={getAdvertiserLabel}
-            newListingIds={newListingIds}
+            newListingIds={newListingIds7d}
           />
 
-          {selectedRun && (
-            <div style={{ display: "flex", gap: 12, marginTop: 16, alignItems: "center" }}>
-              <button
-                disabled={page === 0}
-                onClick={() => {
-                  const p = page - 1;
-                  setPage(p);
-                  loadListingsForRun(selectedRun, false, p);
-                }}
-              >
-                ← Prev
-              </button>
-              <span className="muted">
-                Pagina {page + 1} / {totalPages}
-              </span>
-              <button
-                disabled={page + 1 >= totalPages}
-                onClick={() => {
-                  const p = page + 1;
-                  setPage(p);
-                  loadListingsForRun(selectedRun, false, p);
-                }}
-              >
-                Next →
-              </button>
-            </div>
-          )}
+          <div style={{ display: "flex", gap: 12, marginTop: 16, alignItems: "center" }}>
+            <button
+              disabled={page === 0}
+              onClick={() => {
+                const p = page - 1;
+                setPage(p);
+                const snapshot = { acqFrom, acqTo, priceMin, priceMax, contractFilter, agentFilter, advertiserFilter };
+                loadListingsForAgency(false, p, snapshot, annSort);
+              }}
+            >
+              ← Prev
+            </button>
+            <span className="muted">
+              Pagina {page + 1} / {totalPages}
+            </span>
+            <button
+              disabled={page + 1 >= totalPages}
+              onClick={() => {
+                const p = page + 1;
+                setPage(p);
+                const snapshot = { acqFrom, acqTo, priceMin, priceMax, contractFilter, agentFilter, advertiserFilter };
+                loadListingsForAgency(false, p, snapshot, annSort);
+              }}
+            >
+              Next →
+            </button>
+          </div>
         </div>
       )}
-
 
       {/* MONITOR (solo TL) */}
       {view === "monitor" && isTL && (
@@ -1590,8 +1568,6 @@ export default function App() {
           getAdvertiserLabel={getAdvertiserLabel}
         />
       )}
-
-
 
       {/* AGENTI (solo TL) */}
       {view === "agents" && isTL && (
