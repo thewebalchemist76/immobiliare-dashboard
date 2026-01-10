@@ -569,8 +569,6 @@ export default function App() {
   }, [agency?.id]);
 
   
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, isTL, agency?.id]);
 
   /* ================= START RUN ================= */
   const startRun = async () => {
