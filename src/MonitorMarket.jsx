@@ -193,7 +193,9 @@ export default function MonitorMarket({
         : [];
 
       const byAdv = new Map();
-      let ok = 0, pot = 0, ver = 0;
+      let ok = 0,
+        pot = 0,
+        ver = 0;
 
       for (const x of inZone) {
         const adv = getAdvertiserLabel(x) || "—";
@@ -204,9 +206,16 @@ export default function MonitorMarket({
 
         const cur = byAdv.get(adv) || { adv, ok: 0, pot: 0, ver: 0, total: 0 };
 
-        if (isVer) { cur.ver++; ver++; }
-        else if (isOk) { cur.ok++; ok++; }
-        else { cur.pot++; pot++; }
+        if (isVer) {
+          cur.ver++;
+          ver++;
+        } else if (isOk) {
+          cur.ok++;
+          ok++;
+        } else {
+          cur.pot++;
+          pot++;
+        }
 
         cur.total++;
         byAdv.set(adv, cur);
@@ -366,7 +375,15 @@ export default function MonitorMarket({
         </div>
 
         {/* Tabella */}
-        <div className="table-wrap" style={{ marginTop: 14 }}>
+        <div
+          className="table-wrap"
+          style={{
+            marginTop: 14,
+            maxHeight: "60vh",
+            overflowY: "auto",
+            borderRadius: 12,
+          }}
+        >
           <table className="crm-table">
             <thead>
               <tr>
