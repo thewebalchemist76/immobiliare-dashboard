@@ -405,6 +405,9 @@ export default function App() {
   // cache annunci (tutti listing unici agenzia)
   const [allAgencyListings, setAllAgencyListings] = useState([]);
 
+  // token anti-race (evita che una load “vecchia” sovrascriva stato dopo switch agency)
+  const listingsLoadTokenRef = useRef(0);
+
   const clearAuthHash = () => {
     if (window.location.hash) {
       history.replaceState(null, "", window.location.pathname + window.location.search);
@@ -543,11 +546,11 @@ export default function App() {
     setAgencies(rows);
     setAgenciesLoading(false);
 
-    // initial selection:
     setSelectedAgencyId((prev) => {
       if (prev && rows.some((x) => x.id === prev)) return prev;
 
-      const preferred = agentProfile?.agency_id && rows.some((x) => x.id === agentProfile.agency_id) ? agentProfile.agency_id : null;
+      const preferred =
+        agentProfile?.agency_id && rows.some((x) => x.id === agentProfile.agency_id) ? agentProfile.agency_id : null;
       if (preferred) return preferred;
 
       return rows[0]?.id || null;
@@ -556,19 +559,47 @@ export default function App() {
 
   useEffect(() => {
     if (!session?.user?.id) return;
-    // carichiamo agencies solo quando abbiamo profilo
     if (!agentProfileLoading) loadAgencies();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.user?.id, agentProfileLoading]);
 
   useEffect(() => {
-    // non-TL: selection fissa sulla sua agency
     if (!agentProfile?.agency_id) return;
-    if (!isTL) {
-      setSelectedAgencyId(agentProfile.agency_id);
-    }
+    if (!isTL) setSelectedAgencyId(agentProfile.agency_id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentProfile?.agency_id, isTL]);
+
+  /* ================= RESET HARD SU SWITCH AGENCY (anti “mix annunci”) ================= */
+  useEffect(() => {
+    if (!selectedAgencyId) return;
+
+    // invalida qualunque load in-flight
+    listingsLoadTokenRef.current += 1;
+
+    closeDetails();
+    setSelectedRun(null);
+    setRuns([]);
+    setNewListingIds(new Set());
+    setNewListingIds7d(new Set());
+    setAllRunListings([]);
+    setAllAgencyListings([]);
+    setListings([]);
+    setTotalCount(0);
+    setPage(0);
+    setNotesByListing({});
+    setNotesMetaByListing({});
+    setAssignByListing({});
+    setAgencyAgents([]);
+
+    // reset filtri
+    setAgentFilter("");
+    setContractFilter("");
+    setAdvertiserFilter("");
+    setPriceMin("");
+    setPriceMax("");
+    setAcqFrom("");
+    setAcqTo("");
+  }, [selectedAgencyId]);
 
   /* ================= AGENCY (selected) ================= */
   useEffect(() => {
@@ -773,9 +804,7 @@ export default function App() {
 
     const agencyName = a?.agencyName || r?.analytics?.agencyName || r?.contacts?.agencyName || "";
 
-    if (advertiser === "agenzia") {
-      return `Agenzia: ${agencyName || "Agenzia"}`;
-    }
+    if (advertiser === "agenzia") return `Agenzia: ${agencyName || "Agenzia"}`;
 
     const privName = a?.advertiserName || a?.privateName || a?.ownerName || "Inserzionista privato";
     return `Privato: ${privName}`;
@@ -862,11 +891,8 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (selectedRun?.id && agency?.id) {
-      loadNewListingsForRun(selectedRun);
-    } else {
-      setNewListingIds(new Set());
-    }
+    if (selectedRun?.id && agency?.id) loadNewListingsForRun(selectedRun);
+    else setNewListingIds(new Set());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedRun?.id, agency?.id]);
 
@@ -906,7 +932,11 @@ export default function App() {
     if (!isTL || !agency?.id || !session?.user?.id) return;
 
     if (!agentUserId) {
-      const { error } = await supabase.from("listing_assignments").delete().eq("agency_id", agency.id).eq("listing_id", listingId);
+      const { error } = await supabase
+        .from("listing_assignments")
+        .delete()
+        .eq("agency_id", agency.id)
+        .eq("listing_id", listingId);
 
       if (error) {
         console.error("delete assignment:", error.message);
@@ -944,6 +974,9 @@ export default function App() {
   const loadListingsForAgency = async (resetPage = true, pageOverride = null, filtersOverride = null, sortOverride = null) => {
     if (!agency?.id) return;
 
+    const token = listingsLoadTokenRef.current;
+    const agencyIdAtCall = agency.id;
+
     if (resetPage) setPage(0);
 
     const f =
@@ -960,7 +993,10 @@ export default function App() {
 
     const sortKey = sortOverride || annSort;
 
-    const { data: links, error: linksErr } = await supabase.from("agency_listings").select("listing_id").eq("agency_id", agency.id);
+    const { data: links, error: linksErr } = await supabase.from("agency_listings").select("listing_id").eq("agency_id", agencyIdAtCall);
+
+    // se nel frattempo hai cambiato agenzia, ignora
+    if (token !== listingsLoadTokenRef.current || agencyIdAtCall !== agency?.id) return;
 
     if (linksErr || !links?.length) {
       setListings([]);
@@ -986,6 +1022,9 @@ export default function App() {
     if (toNextISO) q = q.lt("first_seen_at", toNextISO);
 
     const { data, error } = await q;
+
+    if (token !== listingsLoadTokenRef.current || agencyIdAtCall !== agency?.id) return;
+
     if (error) {
       console.error("loadListingsForAgency:", error.message);
       setListings([]);
@@ -1010,11 +1049,11 @@ export default function App() {
     setNewListingIds7d(newSet7);
 
     const assignMapAll = await (async () => {
-      if (!agency?.id || !rows.length) return {};
+      if (!agencyIdAtCall || !rows.length) return {};
       const { data: aData, error: aErr } = await supabase
         .from("listing_assignments")
         .select("listing_id, agent_user_id")
-        .eq("agency_id", agency.id)
+        .eq("agency_id", agencyIdAtCall)
         .in("listing_id", rows.map((x) => x.id));
 
       if (aErr) {
@@ -1029,8 +1068,9 @@ export default function App() {
       return m;
     })();
 
-    let filtered = rows;
+    if (token !== listingsLoadTokenRef.current || agencyIdAtCall !== agency?.id) return;
 
+    let filtered = rows;
     if (f.contractFilter) filtered = filtered.filter((l) => (getContractName(l) || "") === f.contractFilter);
     if (f.advertiserFilter) filtered = filtered.filter((l) => (getAdvertiserLabel(l) || "") === f.advertiserFilter);
     if (f.agentFilter) filtered = filtered.filter((l) => (assignMapAll[l.id] || "") === f.agentFilter);
@@ -1167,7 +1207,6 @@ export default function App() {
     })();
 
     let filtered = rows;
-
     if (f.contractFilter) filtered = filtered.filter((l) => (getContractName(l) || "") === f.contractFilter);
     if (f.advertiserFilter) filtered = filtered.filter((l) => (getAdvertiserLabel(l) || "") === f.advertiserFilter);
     if (f.agentFilter) filtered = filtered.filter((l) => (assignMapAll[l.id] || "") === f.agentFilter);
@@ -1389,25 +1428,6 @@ export default function App() {
                 value={selectedAgencyId || ""}
                 onChange={(e) => {
                   const v = e.target.value || null;
-                  closeDetails();
-                  setSelectedRun(null);
-                  setNewListingIds(new Set());
-                  setNewListingIds7d(new Set());
-                  setAllRunListings([]);
-                  setAllAgencyListings([]);
-                  setListings([]);
-                  setTotalCount(0);
-                  setPage(0);
-                  setNotesByListing({});
-                  setNotesMetaByListing({});
-                  setAssignByListing({});
-                  setAgentFilter("");
-                  setContractFilter("");
-                  setAdvertiserFilter("");
-                  setPriceMin("");
-                  setPriceMax("");
-                  setAcqFrom("");
-                  setAcqTo("");
                   setSelectedAgencyId(v);
                 }}
                 style={{ minWidth: 260, padding: "10px 12px", borderRadius: 12 }}
