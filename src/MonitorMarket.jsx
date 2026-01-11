@@ -58,6 +58,77 @@ const Bar = ({ value, max }) => {
   );
 };
 
+// ===== Pie helpers (no libs) =====
+const PIE_COLORS = [
+  "#2563eb",
+  "#16a34a",
+  "#f59e0b",
+  "#dc2626",
+  "#7c3aed",
+  "#0ea5e9",
+  "#22c55e",
+  "#f97316",
+  "#ef4444",
+  "#8b5cf6",
+  "#06b6d4",
+  "#84cc16",
+  "#eab308",
+  "#fb7185",
+  "#14b8a6",
+  "#a855f7",
+];
+
+const polarToCartesian = (cx, cy, r, angleDeg) => {
+  const rad = ((angleDeg - 90) * Math.PI) / 180.0;
+  return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
+};
+
+const describeArc = (cx, cy, r, startAngle, endAngle) => {
+  const start = polarToCartesian(cx, cy, r, endAngle);
+  const end = polarToCartesian(cx, cy, r, startAngle);
+  const largeArcFlag = endAngle - startAngle <= 180 ? "0" : "1";
+  return ["M", start.x, start.y, "A", r, r, 0, largeArcFlag, 0, end.x, end.y, "L", cx, cy, "Z"].join(" ");
+};
+
+const PieChart = ({ slices, size = 240 }) => {
+  const total = (slices || []).reduce((s, x) => s + Number(x?.value || 0), 0);
+  const cx = size / 2;
+  const cy = size / 2;
+  const r = size / 2 - 4;
+
+  if (!total) {
+    return (
+      <div className="muted" style={{ padding: 12 }}>
+        Nessun dato per grafico.
+      </div>
+    );
+  }
+
+  let angle = 0;
+  const paths = [];
+
+  for (let i = 0; i < slices.length; i++) {
+    const v = Number(slices[i].value || 0);
+    if (v <= 0) continue;
+    const sliceAngle = (v / total) * 360;
+    const start = angle;
+    const end = angle + sliceAngle;
+
+    const d = describeArc(cx, cy, r, start, end);
+    paths.push({ d, color: slices[i].color, label: slices[i].label, value: v });
+
+    angle = end;
+  }
+
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img" aria-label="Pie chart">
+      {paths.map((p, idx) => (
+        <path key={`${p.label}-${idx}`} d={p.d} fill={p.color} stroke="white" strokeWidth="2" />
+      ))}
+    </svg>
+  );
+};
+
 export default function MonitorMarket({ supabase, agencyId, isTL, agentEmailByUserId, getAdvertiserLabel }) {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
@@ -78,7 +149,7 @@ export default function MonitorMarket({ supabase, agencyId, isTL, agentEmailByUs
 
   // ================= SORT (Inserzionisti) =================
   // default: Totale desc (come prima)
-  const [advSortKey, setAdvSortKey] = useState("total"); // adv | ok | pot | ver | total | okPct | potPct | verPct
+  const [advSortKey, setAdvSortKey] = useState("total"); // adv | ok | pot | ver | total | okPct | potPct | verPct | penPct
   const [advSortDir, setAdvSortDir] = useState("desc"); // asc | desc
 
   const toggleSort = (key) => {
@@ -133,6 +204,8 @@ export default function MonitorMarket({ supabase, agencyId, isTL, agentEmailByUs
           return cmpNum(a.potPct, b.potPct);
         case "verPct":
           return cmpNum(a.verPct, b.verPct);
+        case "penPct":
+          return cmpNum(a.penPct, b.penPct);
         default:
           return cmpNum(a.total, b.total);
       }
@@ -276,6 +349,8 @@ export default function MonitorMarket({ supabase, agencyId, isTL, agentEmailByUs
 
       setZoneTotals({ ok, pot, ver, total: ok + pot + ver, advCounts });
 
+      const zoneTotal = ok + pot + ver;
+
       setZoneRows(
         advCounts.map((r) => ({
           adv: r.adv,
@@ -286,6 +361,7 @@ export default function MonitorMarket({ supabase, agencyId, isTL, agentEmailByUs
           okPct: pct(r.ok, r.total),
           potPct: pct(r.pot, r.total),
           verPct: pct(r.ver, r.total),
+          penPct: pct(r.total, zoneTotal), // penetrazione: quota sul totale zona
         }))
       );
 
@@ -300,8 +376,16 @@ export default function MonitorMarket({ supabase, agencyId, isTL, agentEmailByUs
   };
 
   const exportZoneCSV = () => {
-    const header = ["macrozone", "advertiser", "ok_assigned", "potenziale_unassigned", "da_verificare_zone_empty", "total"];
-    const body = zoneRows.map((r) => [zone, r.adv, r.ok, r.pot, r.ver, r.total]);
+    const header = [
+      "macrozone",
+      "advertiser",
+      "ok_assigned",
+      "potenziale_unassigned",
+      "da_verificare_zone_empty",
+      "total",
+      "penetration_pct",
+    ];
+    const body = zoneRows.map((r) => [zone, r.adv, r.ok, r.pot, r.ver, r.total, r.penPct]);
     downloadCSV(`monitor_zone_${zone}.csv`, [header, ...body]);
   };
 
@@ -321,9 +405,44 @@ export default function MonitorMarket({ supabase, agencyId, isTL, agentEmailByUs
 
   const weeklyMax = useMemo(() => Math.max(0, ...(weekly || []).map((x) => Number(x.newCount || 0))), [weekly]);
 
+  // ===== Pie + Top10 data =====
+  const pieAndTop = useMemo(() => {
+    const zoneTotal = Number(zoneTotals?.total || 0);
+    const base = [...(zoneRows || [])].sort((a, b) => Number(b.total || 0) - Number(a.total || 0));
+
+    const TOP_N = 10;
+    const PIE_N = 12;
+
+    const top10 = base.slice(0, TOP_N).map((r) => ({
+      adv: r.adv,
+      total: r.total,
+      penPct: pct(r.total, zoneTotal),
+    }));
+
+    const pieBase = base.slice(0, PIE_N);
+    const rest = base.slice(PIE_N);
+
+    const slices = pieBase.map((r, idx) => ({
+      label: r.adv,
+      value: Number(r.total || 0),
+      color: PIE_COLORS[idx % PIE_COLORS.length],
+    }));
+
+    const restSum = rest.reduce((s, x) => s + Number(x.total || 0), 0);
+    if (restSum > 0) {
+      slices.push({
+        label: "Altri",
+        value: restSum,
+        color: "#9ca3af",
+      });
+    }
+
+    return { slices, top10 };
+  }, [zoneRows, zoneTotals?.total]);
+
   if (!isTL) return null;
 
-  const Th = ({ k, children, alignRight = false, width = null }) => (
+  const Th = ({ k, children, alignRight = false }) => (
     <th
       onClick={() => toggleSort(k)}
       title="Ordina"
@@ -331,7 +450,6 @@ export default function MonitorMarket({ supabase, agencyId, isTL, agentEmailByUs
         cursor: "pointer",
         userSelect: "none",
         textAlign: alignRight ? "right" : "left",
-        width: width || undefined,
         whiteSpace: "nowrap",
       }}
     >
@@ -418,7 +536,11 @@ export default function MonitorMarket({ supabase, agencyId, isTL, agentEmailByUs
             Mercato per Zona
           </div>
           <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-            <select value={zone} onChange={(e) => setZone(e.target.value)} style={{ width: 260, padding: "10px 12px", borderRadius: 12 }}>
+            <select
+              value={zone}
+              onChange={(e) => setZone(e.target.value)}
+              style={{ width: 260, padding: "10px 12px", borderRadius: 12 }}
+            >
               {zones.map((z) => (
                 <option key={z} value={z}>
                   {z}
@@ -516,6 +638,9 @@ export default function MonitorMarket({ supabase, agencyId, isTL, agentEmailByUs
                 <Th k="total" alignRight>
                   Totale
                 </Th>
+                <Th k="penPct" alignRight>
+                  Pen %
+                </Th>
                 <Th k="okPct" alignRight>
                   OK %
                 </Th>
@@ -535,6 +660,7 @@ export default function MonitorMarket({ supabase, agencyId, isTL, agentEmailByUs
                   <td style={{ textAlign: "right", fontWeight: 800 }}>{r.pot}</td>
                   <td style={{ textAlign: "right", fontWeight: 800 }}>{r.ver}</td>
                   <td style={{ textAlign: "right", fontWeight: 900 }}>{r.total}</td>
+                  <td style={{ textAlign: "right" }}>{r.penPct}%</td>
                   <td style={{ textAlign: "right" }}>{r.okPct}%</td>
                   <td style={{ textAlign: "right" }}>{r.potPct}%</td>
                   <td style={{ textAlign: "right" }}>{r.verPct}%</td>
@@ -542,7 +668,7 @@ export default function MonitorMarket({ supabase, agencyId, isTL, agentEmailByUs
               ))}
               {!sortedZoneRows.length && (
                 <tr>
-                  <td colSpan={8} className="muted" style={{ padding: 14 }}>
+                  <td colSpan={9} className="muted" style={{ padding: 14 }}>
                     Nessun dato per questa zona.
                   </td>
                 </tr>
@@ -551,8 +677,84 @@ export default function MonitorMarket({ supabase, agencyId, isTL, agentEmailByUs
           </table>
         </div>
 
+        {/* PIE + TOP10 */}
+        <div style={{ marginTop: 18 }}>
+          <div className="muted" style={{ fontWeight: 800, marginBottom: 10 }}>
+            Potenza inserzionisti (quota sul totale zona)
+          </div>
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "minmax(260px, 360px) 1fr",
+              gap: 16,
+              alignItems: "start",
+            }}
+          >
+            <div className="card" style={{ background: "rgba(255,255,255,0.6)" }}>
+              <div style={{ display: "flex", justifyContent: "center", paddingTop: 6 }}>
+                <PieChart slices={pieAndTop.slices} size={260} />
+              </div>
+
+              <div style={{ marginTop: 10, display: "grid", gap: 6 }}>
+                {pieAndTop.slices.slice(0, 10).map((s, i) => (
+                  <div key={`${s.label}-${i}`} style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                    <div style={{ width: 12, height: 12, borderRadius: 4, background: s.color, flex: "0 0 auto" }} />
+                    <div style={{ fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {s.label}
+                    </div>
+                    <div className="muted" style={{ marginLeft: "auto", fontWeight: 800 }}>
+                      {pct(s.value, zoneTotals.total)}%
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="muted" style={{ marginTop: 10 }}>
+                (pie: top 12 + “Altri”)
+              </div>
+            </div>
+
+            <div className="card" style={{ background: "rgba(255,255,255,0.6)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+                <div style={{ fontWeight: 900 }}>Top 10 inserzionisti</div>
+                <div className="muted">Zona: {zone || "—"}</div>
+              </div>
+
+              <div className="table-wrap" style={{ marginTop: 10, borderRadius: 12, overflow: "hidden" }}>
+                <table className="crm-table">
+                  <thead>
+                    <tr>
+                      <th>Inserzionista</th>
+                      <th style={{ textAlign: "right" }}>Totale</th>
+                      <th style={{ textAlign: "right" }}>Pen %</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pieAndTop.top10.map((r) => (
+                      <tr key={r.adv}>
+                        <td style={{ fontWeight: 800 }}>{r.adv}</td>
+                        <td style={{ textAlign: "right", fontWeight: 900 }}>{r.total}</td>
+                        <td style={{ textAlign: "right" }}>{r.penPct}%</td>
+                      </tr>
+                    ))}
+                    {!pieAndTop.top10.length && (
+                      <tr>
+                        <td colSpan={3} className="muted" style={{ padding: 14 }}>
+                          Nessun dato.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div className="muted" style={{ marginTop: 10, fontWeight: 600 }}>
-          Definizioni: <b>OK</b>=assegnato, <b>Potenziale</b>=non assegnato, <b>Da verificare</b>=zona vuota.
+          Definizioni: <b>OK</b>=assegnato, <b>Potenziale</b>=non assegnato, <b>Da verificare</b>=zona vuota,{" "}
+          <b>Pen %</b>=quota inserzionista sul totale della zona.
         </div>
       </div>
     </div>
