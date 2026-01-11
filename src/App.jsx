@@ -210,11 +210,13 @@ const ListingsTable = ({
   getAdvertiserLabel,
   newListingIds,
 }) => {
-  const daysOnline = (raw) => {
-    const ts = Number(raw?.creationDate || 0); // unix seconds
-    if (!ts) return null;
-    const nowSec = Date.now() / 1000;
-    const diff = Math.floor((nowSec - ts) / (60 * 60 * 24));
+  // Online da = differenza giorni da first_seen_at (coerente con NEW badge e filtri)
+  const daysOnline = (firstSeenAt) => {
+    if (!firstSeenAt) return null;
+    const first = new Date(firstSeenAt).getTime();
+    if (!first) return null;
+    const now = Date.now();
+    const diff = Math.floor((now - first) / (1000 * 60 * 60 * 24));
     return Math.max(0, diff);
   };
 
@@ -237,12 +239,14 @@ const ListingsTable = ({
           <tr>
             <th style={{ ...thBase, width: 120 }}>Data acquisizione</th>
 
-            {/* <th style={{ ...thBase, width: 130 }}>Ultimo aggiornamento</th> */}
+            {/* "Ultimo aggiornamento" commentato (non rimosso) per guadagnare spazio */}
+            {/*
+            <th style={{ ...thBase, width: 130 }}>Ultimo aggiornamento</th>
+            */}
 
-            <th style={{ ...thBase, width: 105, textAlign: "right" }} title="Da quanti giorni l'annuncio è online">
+            <th style={{ ...thBase, width: 105, textAlign: "right" }} title="Da quanti giorni è online (dal primo rilevamento)">
               Online da
             </th>
-
             <th style={{ ...thBase, width: 360, whiteSpace: "normal" }}>Titolo</th>
             <th style={{ ...thBase, width: 90, textAlign: "right" }}>Prezzo</th>
             <th style={{ ...thBase, width: 120 }}>Contratto</th>
@@ -266,18 +270,20 @@ const ListingsTable = ({
             const assignedEmail = assignedUserId ? agentEmailByUserId?.[assignedUserId] : "";
 
             const isNew = !!newListingIds && newListingIds.has(l.id);
-            const onlineDays = daysOnline(r);
+            const onlineDays = daysOnline(l.first_seen_at);
 
             return (
               <tr key={l.id}>
                 <td style={tdBase}>{fmtDate(l.first_seen_at)}</td>
 
-                {/* <td style={tdBase}>{fmtDate((r.lastModified || 0) * 1000)}</td> */}
+                {/* "Ultimo aggiornamento" commentato (non rimosso) */}
+                {/*
+                <td style={tdBase}>{fmtDate((r.lastModified || 0) * 1000)}</td>
+                */}
 
-                <td style={{ ...tdBase, textAlign: "right", fontWeight: 800 }}>
+                <td style={{ ...tdBase, textAlign: "right", fontWeight: 800, whiteSpace: "nowrap" }}>
                   {onlineDays === null ? <span className="muted">—</span> : `${onlineDays} gg`}
                 </td>
-
                 <td style={{ ...tdBase, whiteSpace: "normal" }}>
                   <div style={{ fontWeight: 600, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                     <span>{safe(r.title)}</span>
@@ -431,7 +437,7 @@ export default function App() {
   const [advertiserFilter, setAdvertiserFilter] = useState("");
 
   // sort (Annunci)
-  const [annSort, setAnnSort] = useState("acq_desc"); // acq_desc | acq_asc | online_asc | online_desc | price_asc | price_desc | adv_asc | agent_asc | agent_desc
+  const [annSort, setAnnSort] = useState("acq_desc"); // acq_desc | acq_asc | online_desc | online_asc | price_asc | price_desc | adv_asc | agent_asc | agent_desc
 
   // legacy cache run
   const [allRunListings, setAllRunListings] = useState([]);
@@ -902,10 +908,7 @@ export default function App() {
       return;
     }
 
-    const { data: current, error: curErr } = await supabase
-      .from("agency_run_listings")
-      .select("listing_id")
-      .eq("run_id", run.id);
+    const { data: current, error: curErr } = await supabase.from("agency_run_listings").select("listing_id").eq("run_id", run.id);
 
     if (curErr) {
       console.error("load current run listings:", curErr.message);
@@ -913,10 +916,7 @@ export default function App() {
       return;
     }
 
-    const { data: previous, error: prevListErr } = await supabase
-      .from("agency_run_listings")
-      .select("listing_id")
-      .eq("run_id", prevRun.id);
+    const { data: previous, error: prevListErr } = await supabase.from("agency_run_listings").select("listing_id").eq("run_id", prevRun.id);
 
     if (prevListErr) {
       console.error("load previous run listings:", prevListErr.message);
@@ -971,11 +971,7 @@ export default function App() {
     if (!isTL || !agency?.id || !session?.user?.id) return;
 
     if (!agentUserId) {
-      const { error } = await supabase
-        .from("listing_assignments")
-        .delete()
-        .eq("agency_id", agency.id)
-        .eq("listing_id", listingId);
+      const { error } = await supabase.from("listing_assignments").delete().eq("agency_id", agency.id).eq("listing_id", listingId);
 
       if (error) {
         console.error("delete assignment:", error.message);
@@ -1032,10 +1028,7 @@ export default function App() {
 
     const sortKey = sortOverride || annSort;
 
-    const { data: links, error: linksErr } = await supabase
-      .from("agency_listings")
-      .select("listing_id")
-      .eq("agency_id", agencyIdAtCall);
+    const { data: links, error: linksErr } = await supabase.from("agency_listings").select("listing_id").eq("agency_id", agencyIdAtCall);
 
     // se nel frattempo hai cambiato agenzia, ignora
     if (token !== listingsLoadTokenRef.current || agencyIdAtCall !== agency?.id) return;
@@ -1123,17 +1116,19 @@ export default function App() {
       return Number.isFinite(t) ? t : 0;
     };
 
-    const safeCreationSec = (x) => {
-      const sec = Number(x?.raw?.creationDate || 0);
-      return Number.isFinite(sec) ? sec : 0;
+    const safeOnlineDays = (x) => {
+      const t = safeTime(x);
+      if (!t) return Number.MAX_SAFE_INTEGER; // senza data va in fondo (sia asc che desc gestito sotto)
+      const diff = Math.floor((Date.now() - t) / (1000 * 60 * 60 * 24));
+      return Math.max(0, diff);
     };
 
     sortArr.sort((a, b) => {
       if (sortKey === "acq_asc") return safeTime(a) - safeTime(b);
       if (sortKey === "acq_desc") return safeTime(b) - safeTime(a);
 
-      if (sortKey === "online_asc") return safeCreationSec(a) - safeCreationSec(b); // più vecchi prima
-      if (sortKey === "online_desc") return safeCreationSec(b) - safeCreationSec(a); // più recenti prima
+      if (sortKey === "online_asc") return safeOnlineDays(a) - safeOnlineDays(b); // più recente (meno giorni) prima
+      if (sortKey === "online_desc") return safeOnlineDays(b) - safeOnlineDays(a); // più vecchio (più giorni) prima
 
       if (sortKey === "price_asc") return Number(a?.price ?? 0) - Number(b?.price ?? 0);
       if (sortKey === "price_desc") return Number(b?.price ?? 0) - Number(a?.price ?? 0);
@@ -1200,10 +1195,7 @@ export default function App() {
         advertiserFilter,
       });
 
-    const { data: links, error: linksErr } = await supabase
-      .from("agency_run_listings")
-      .select("listing_id")
-      .eq("run_id", run.id);
+    const { data: links, error: linksErr } = await supabase.from("agency_run_listings").select("listing_id").eq("run_id", run.id);
 
     if (linksErr || !links?.length) {
       setListings([]);
@@ -1217,11 +1209,7 @@ export default function App() {
 
     const ids = links.map((l) => l.listing_id);
 
-    let q = supabase
-      .from("listings")
-      .select("id, price, url, raw, first_seen_at")
-      .in("id", ids)
-      .order("price", { ascending: true });
+    let q = supabase.from("listings").select("id, price, url, raw, first_seen_at").in("id", ids).order("price", { ascending: true });
 
     if (f.priceMin) q = q.gte("price", Number(f.priceMin));
     if (f.priceMax) q = q.lte("price", Number(f.priceMax));
@@ -1553,8 +1541,8 @@ export default function App() {
               >
                 <option value="acq_desc">Data acquisizione ↓</option>
                 <option value="acq_asc">Data acquisizione ↑</option>
-                <option value="online_desc">Online da (più recente) ↓</option>
-                <option value="online_asc">Online da (più vecchio) ↑</option>
+                <option value="online_desc">Online da ↓</option>
+                <option value="online_asc">Online da ↑</option>
                 <option value="price_asc">Prezzo ↑</option>
                 <option value="price_desc">Prezzo ↓</option>
                 <option value="adv_asc">Agenzia / Privato A–Z</option>
@@ -1647,8 +1635,8 @@ export default function App() {
               >
                 <option value="acq_desc">Data acquisizione ↓</option>
                 <option value="acq_asc">Data acquisizione ↑</option>
-                <option value="online_desc">Online da (più recente) ↓</option>
-                <option value="online_asc">Online da (più vecchio) ↑</option>
+                <option value="online_desc">Online da ↓</option>
+                <option value="online_asc">Online da ↑</option>
                 <option value="price_asc">Prezzo ↑</option>
                 <option value="price_desc">Prezzo ↓</option>
                 <option value="adv_asc">Agenzia / Privato A–Z</option>
