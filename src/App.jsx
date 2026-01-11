@@ -236,10 +236,13 @@ const ListingsTable = ({
         <thead>
           <tr>
             <th style={{ ...thBase, width: 120 }}>Data acquisizione</th>
-            <th style={{ ...thBase, width: 130 }}>Ultimo aggiornamento</th>
-            <th style={{ ...thBase, width: 95, textAlign: "right" }} title="Da quanti giorni l'annuncio è online">
-              Online (gg)
+
+            {/* <th style={{ ...thBase, width: 130 }}>Ultimo aggiornamento</th> */}
+
+            <th style={{ ...thBase, width: 105, textAlign: "right" }} title="Da quanti giorni l'annuncio è online">
+              Online da
             </th>
+
             <th style={{ ...thBase, width: 360, whiteSpace: "normal" }}>Titolo</th>
             <th style={{ ...thBase, width: 90, textAlign: "right" }}>Prezzo</th>
             <th style={{ ...thBase, width: 120 }}>Contratto</th>
@@ -268,10 +271,13 @@ const ListingsTable = ({
             return (
               <tr key={l.id}>
                 <td style={tdBase}>{fmtDate(l.first_seen_at)}</td>
-                <td style={tdBase}>{fmtDate((r.lastModified || 0) * 1000)}</td>
+
+                {/* <td style={tdBase}>{fmtDate((r.lastModified || 0) * 1000)}</td> */}
+
                 <td style={{ ...tdBase, textAlign: "right", fontWeight: 800 }}>
-                  {onlineDays === null ? <span className="muted">—</span> : onlineDays}
+                  {onlineDays === null ? <span className="muted">—</span> : `${onlineDays} gg`}
                 </td>
+
                 <td style={{ ...tdBase, whiteSpace: "normal" }}>
                   <div style={{ fontWeight: 600, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                     <span>{safe(r.title)}</span>
@@ -425,7 +431,7 @@ export default function App() {
   const [advertiserFilter, setAdvertiserFilter] = useState("");
 
   // sort (Annunci)
-  const [annSort, setAnnSort] = useState("acq_desc"); // acq_desc | acq_asc | price_asc | price_desc | adv_asc | agent_asc | agent_desc
+  const [annSort, setAnnSort] = useState("acq_desc"); // acq_desc | acq_asc | online_asc | online_desc | price_asc | price_desc | adv_asc | agent_asc | agent_desc
 
   // legacy cache run
   const [allRunListings, setAllRunListings] = useState([]);
@@ -1117,9 +1123,17 @@ export default function App() {
       return Number.isFinite(t) ? t : 0;
     };
 
+    const safeCreationSec = (x) => {
+      const sec = Number(x?.raw?.creationDate || 0);
+      return Number.isFinite(sec) ? sec : 0;
+    };
+
     sortArr.sort((a, b) => {
       if (sortKey === "acq_asc") return safeTime(a) - safeTime(b);
       if (sortKey === "acq_desc") return safeTime(b) - safeTime(a);
+
+      if (sortKey === "online_asc") return safeCreationSec(a) - safeCreationSec(b); // più vecchi prima
+      if (sortKey === "online_desc") return safeCreationSec(b) - safeCreationSec(a); // più recenti prima
 
       if (sortKey === "price_asc") return Number(a?.price ?? 0) - Number(b?.price ?? 0);
       if (sortKey === "price_desc") return Number(b?.price ?? 0) - Number(a?.price ?? 0);
@@ -1539,6 +1553,8 @@ export default function App() {
               >
                 <option value="acq_desc">Data acquisizione ↓</option>
                 <option value="acq_asc">Data acquisizione ↑</option>
+                <option value="online_desc">Online da (più recente) ↓</option>
+                <option value="online_asc">Online da (più vecchio) ↑</option>
                 <option value="price_asc">Prezzo ↑</option>
                 <option value="price_desc">Prezzo ↓</option>
                 <option value="adv_asc">Agenzia / Privato A–Z</option>
@@ -1631,6 +1647,8 @@ export default function App() {
               >
                 <option value="acq_desc">Data acquisizione ↓</option>
                 <option value="acq_asc">Data acquisizione ↑</option>
+                <option value="online_desc">Online da (più recente) ↓</option>
+                <option value="online_asc">Online da (più vecchio) ↑</option>
                 <option value="price_asc">Prezzo ↑</option>
                 <option value="price_desc">Prezzo ↓</option>
                 <option value="adv_asc">Agenzia / Privato A–Z</option>
