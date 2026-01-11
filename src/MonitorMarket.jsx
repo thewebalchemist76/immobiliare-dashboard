@@ -696,19 +696,54 @@ export default function MonitorMarket({ supabase, agencyId, isTL, agentEmailByUs
                 <PieChart slices={pieAndTop.slices} size={260} />
               </div>
 
-              <div style={{ marginTop: 10, display: "grid", gap: 6 }}>
-                {pieAndTop.slices.slice(0, 10).map((s, i) => (
-                  <div key={`${s.label}-${i}`} style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                    <div style={{ width: 12, height: 12, borderRadius: 4, background: s.color, flex: "0 0 auto" }} />
-                    <div style={{ fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            <div
+                style={{
+                  marginTop: 10,
+                  display: "grid",
+                  gap: 6,
+                  maxHeight: 260,
+                  overflowY: "auto",
+                  paddingRight: 6,
+                }}
+              >
+                {pieAndTop.slices.slice(0, 14).map((s, i) => (
+                  <div
+                    key={`${s.label}-${i}`}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "12px 1fr 64px",
+                      gap: 10,
+                      alignItems: "center",
+                      minWidth: 0,
+                    }}
+                  >
+                    <div style={{ width: 12, height: 12, borderRadius: 4, background: s.color }} />
+                    <div
+                      title={s.label}
+                      style={{
+                        fontWeight: 700,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        minWidth: 0,
+                      }}
+                    >
                       {s.label}
                     </div>
-                    <div className="muted" style={{ marginLeft: "auto", fontWeight: 800 }}>
+                    <div
+                      className="muted"
+                      style={{
+                        textAlign: "right",
+                        fontWeight: 800,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
                       {pct(s.value, zoneTotals.total)}%
                     </div>
                   </div>
                 ))}
               </div>
+
 
               <div className="muted" style={{ marginTop: 10 }}>
                 (pie: top 12 + “Altri”)
