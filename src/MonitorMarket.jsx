@@ -58,13 +58,7 @@ const Bar = ({ value, max }) => {
   );
 };
 
-export default function MonitorMarket({
-  supabase,
-  agencyId,
-  isTL,
-  agentEmailByUserId,
-  getAdvertiserLabel,
-}) {
+export default function MonitorMarket({ supabase, agencyId, isTL, agentEmailByUserId, getAdvertiserLabel }) {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
@@ -81,6 +75,71 @@ export default function MonitorMarket({
     total: 0,
     advCounts: [],
   });
+
+  // ================= SORT (Inserzionisti) =================
+  // default: Totale desc (come prima)
+  const [advSortKey, setAdvSortKey] = useState("total"); // adv | ok | pot | ver | total | okPct | potPct | verPct
+  const [advSortDir, setAdvSortDir] = useState("desc"); // asc | desc
+
+  const toggleSort = (key) => {
+    setAdvSortKey((prevKey) => {
+      if (prevKey !== key) {
+        setAdvSortDir(key === "adv" ? "asc" : "desc");
+        return key;
+      }
+      setAdvSortDir((prevDir) => (prevDir === "asc" ? "desc" : "asc"));
+      return prevKey;
+    });
+  };
+
+  const sortIndicator = (key) => {
+    if (advSortKey !== key) return "";
+    return advSortDir === "asc" ? " ↑" : " ↓";
+  };
+
+  const sortedZoneRows = useMemo(() => {
+    const rows = [...(zoneRows || [])];
+    const dir = advSortDir === "asc" ? 1 : -1;
+
+    const cmpNum = (a, b) => {
+      const aa = Number(a || 0);
+      const bb = Number(b || 0);
+      if (aa < bb) return -1 * dir;
+      if (aa > bb) return 1 * dir;
+      return 0;
+    };
+
+    const cmpStr = (a, b) => {
+      const aa = (a || "").toString();
+      const bb = (b || "").toString();
+      return aa.localeCompare(bb, "it") * dir;
+    };
+
+    rows.sort((a, b) => {
+      switch (advSortKey) {
+        case "adv":
+          return cmpStr(a.adv, b.adv);
+        case "ok":
+          return cmpNum(a.ok, b.ok);
+        case "pot":
+          return cmpNum(a.pot, b.pot);
+        case "ver":
+          return cmpNum(a.ver, b.ver);
+        case "total":
+          return cmpNum(a.total, b.total);
+        case "okPct":
+          return cmpNum(a.okPct, b.okPct);
+        case "potPct":
+          return cmpNum(a.potPct, b.potPct);
+        case "verPct":
+          return cmpNum(a.verPct, b.verPct);
+        default:
+          return cmpNum(a.total, b.total);
+      }
+    });
+
+    return rows;
+  }, [zoneRows, advSortKey, advSortDir]);
 
   const loadWeekly = async () => {
     if (!agencyId) return;
@@ -149,10 +208,7 @@ export default function MonitorMarket({
     setErr("");
 
     try {
-      const { data: links } = await supabase
-        .from("agency_listings")
-        .select("listing_id")
-        .eq("agency_id", agencyId);
+      const { data: links } = await supabase.from("agency_listings").select("listing_id").eq("agency_id", agencyId);
 
       const ids = (links || []).map((x) => x.listing_id);
       if (!ids.length) {
@@ -163,10 +219,7 @@ export default function MonitorMarket({
         return;
       }
 
-      const { data: all } = await supabase
-        .from("listings")
-        .select("id, raw")
-        .in("id", ids);
+      const { data: all } = await supabase.from("listings").select("id, raw").in("id", ids);
 
       const { data: asg } = await supabase
         .from("listing_assignments")
@@ -188,9 +241,7 @@ export default function MonitorMarket({
       const z = zone && zset.has(zone) ? zone : zlist[0] || "";
       setZone(z);
 
-      const inZone = z
-        ? (all || []).filter((x) => String(x?.raw?.analytics?.macrozone || "").trim() === z)
-        : [];
+      const inZone = z ? (all || []).filter((x) => String(x?.raw?.analytics?.macrozone || "").trim() === z) : [];
 
       const byAdv = new Map();
       let ok = 0,
@@ -237,6 +288,10 @@ export default function MonitorMarket({
           verPct: pct(r.ver, r.total),
         }))
       );
+
+      // reset sort default (mantiene comportamento vecchio)
+      setAdvSortKey("total");
+      setAdvSortDir("desc");
     } catch (e) {
       setErr(e?.message || "Errore monitor");
     } finally {
@@ -254,27 +309,51 @@ export default function MonitorMarket({
     if (!supabase || !agencyId || !isTL) return;
     loadWeekly();
     loadZonesAndZoneTable();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supabase, agencyId, isTL]);
 
   useEffect(() => {
     if (!supabase || !agencyId || !isTL) return;
     if (!zones.length) return;
     loadZonesAndZoneTable();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [zone]);
 
-  const weeklyMax = useMemo(
-    () => Math.max(0, ...(weekly || []).map((x) => Number(x.newCount || 0))),
-    [weekly]
-  );
+  const weeklyMax = useMemo(() => Math.max(0, ...(weekly || []).map((x) => Number(x.newCount || 0))), [weekly]);
 
   if (!isTL) return null;
+
+  const Th = ({ k, children, alignRight = false, width = null }) => (
+    <th
+      onClick={() => toggleSort(k)}
+      title="Ordina"
+      style={{
+        cursor: "pointer",
+        userSelect: "none",
+        textAlign: alignRight ? "right" : "left",
+        width: width || undefined,
+        whiteSpace: "nowrap",
+      }}
+    >
+      {children}
+      <span className="muted" style={{ fontWeight: 900 }}>
+        {sortIndicator(k)}
+      </span>
+    </th>
+  );
 
   return (
     <div className="card">
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
         <h3 style={{ margin: 0 }}>Monitor (12 settimane)</h3>
         <div style={{ display: "flex", gap: 10 }}>
-          <button onClick={() => { loadWeekly(); loadZonesAndZoneTable(); }} disabled={loading}>
+          <button
+            onClick={() => {
+              loadWeekly();
+              loadZonesAndZoneTable();
+            }}
+            disabled={loading}
+          >
             Ricarica
           </button>
           <button onClick={exportWeeklyCSV} disabled={!weekly?.length}>
@@ -283,31 +362,48 @@ export default function MonitorMarket({
         </div>
       </div>
 
-      {err && <div className="muted" style={{ marginTop: 10 }}>Errore: {err}</div>}
+      {err && (
+        <div className="muted" style={{ marginTop: 10 }}>
+          Errore: {err}
+        </div>
+      )}
 
       {/* KPI */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 16, marginTop: 16 }}>
         <div className="card" style={{ background: "rgba(255,255,255,0.6)" }}>
-          <div className="muted" style={{ fontWeight: 700 }}>Nuovi (ultima settimana)</div>
+          <div className="muted" style={{ fontWeight: 700 }}>
+            Nuovi (ultima settimana)
+          </div>
           <div style={{ fontSize: 28, fontWeight: 900, marginTop: 6 }}>{kpi.new7}</div>
         </div>
         <div className="card" style={{ background: "rgba(255,255,255,0.6)" }}>
-          <div className="muted" style={{ fontWeight: 700 }}>Media nuovi (ultime 4 settimane)</div>
+          <div className="muted" style={{ fontWeight: 700 }}>
+            Media nuovi (ultime 4 settimane)
+          </div>
           <div style={{ fontSize: 28, fontWeight: 900, marginTop: 6 }}>{kpi.avg4w}</div>
         </div>
         <div className="card" style={{ background: "rgba(255,255,255,0.6)" }}>
-          <div className="muted" style={{ fontWeight: 700 }}>Run nel periodo</div>
+          <div className="muted" style={{ fontWeight: 700 }}>
+            Run nel periodo
+          </div>
           <div style={{ fontSize: 28, fontWeight: 900, marginTop: 6 }}>{kpi.runs}</div>
         </div>
       </div>
 
       {/* Weekly bars */}
       <div style={{ marginTop: 18 }}>
-        <div className="muted" style={{ fontWeight: 800, marginBottom: 10 }}>Nuovi annunci per settimana</div>
+        <div className="muted" style={{ fontWeight: 800, marginBottom: 10 }}>
+          Nuovi annunci per settimana
+        </div>
         <div style={{ display: "grid", gap: 10 }}>
           {weekly.map((r) => (
-            <div key={r.week} style={{ display: "grid", gridTemplateColumns: "120px 1fr 60px", gap: 12, alignItems: "center" }}>
-              <div className="muted" style={{ fontWeight: 700 }}>{r.week}</div>
+            <div
+              key={r.week}
+              style={{ display: "grid", gridTemplateColumns: "120px 1fr 60px", gap: 12, alignItems: "center" }}
+            >
+              <div className="muted" style={{ fontWeight: 700 }}>
+                {r.week}
+              </div>
               <Bar value={r.newCount} max={weeklyMax} />
               <div style={{ textAlign: "right", fontWeight: 800 }}>{r.newCount}</div>
             </div>
@@ -318,56 +414,76 @@ export default function MonitorMarket({
       {/* Market “excel” */}
       <div style={{ marginTop: 26 }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
-          <div className="muted" style={{ fontWeight: 800 }}>Mercato per Zona</div>
+          <div className="muted" style={{ fontWeight: 800 }}>
+            Mercato per Zona
+          </div>
           <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-            <select
-              value={zone}
-              onChange={(e) => setZone(e.target.value)}
-              style={{ width: 260, padding: "10px 12px", borderRadius: 12 }}
-            >
+            <select value={zone} onChange={(e) => setZone(e.target.value)} style={{ width: 260, padding: "10px 12px", borderRadius: 12 }}>
               {zones.map((z) => (
-                <option key={z} value={z}>{z}</option>
+                <option key={z} value={z}>
+                  {z}
+                </option>
               ))}
             </select>
-            <button onClick={exportZoneCSV} disabled={!zoneRows.length}>Export CSV (Zona)</button>
+            <button onClick={exportZoneCSV} disabled={!zoneRows.length}>
+              Export CSV (Zona)
+            </button>
           </div>
         </div>
 
         {/* Totali */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 16, marginTop: 14 }}>
           <div className="card" style={{ background: "rgba(255,255,255,0.6)" }}>
-            <div className="muted" style={{ fontWeight: 800 }}>Controllo agenzia (OK)</div>
+            <div className="muted" style={{ fontWeight: 800 }}>
+              Controllo agenzia (OK)
+            </div>
             <div style={{ fontSize: 28, fontWeight: 900, marginTop: 6 }}>{pct(zoneTotals.ok, zoneTotals.total)}%</div>
-            <div className="muted" style={{ marginTop: 6 }}>{zoneTotals.ok} / {zoneTotals.total}</div>
+            <div className="muted" style={{ marginTop: 6 }}>
+              {zoneTotals.ok} / {zoneTotals.total}
+            </div>
           </div>
           <div className="card" style={{ background: "rgba(255,255,255,0.6)" }}>
-            <div className="muted" style={{ fontWeight: 800 }}>Potenziale (non assegnato)</div>
+            <div className="muted" style={{ fontWeight: 800 }}>
+              Potenziale (non assegnato)
+            </div>
             <div style={{ fontSize: 28, fontWeight: 900, marginTop: 6 }}>{pct(zoneTotals.pot, zoneTotals.total)}%</div>
-            <div className="muted" style={{ marginTop: 6 }}>{zoneTotals.pot} / {zoneTotals.total}</div>
+            <div className="muted" style={{ marginTop: 6 }}>
+              {zoneTotals.pot} / {zoneTotals.total}
+            </div>
           </div>
           <div className="card" style={{ background: "rgba(255,255,255,0.6)" }}>
-            <div className="muted" style={{ fontWeight: 800 }}>Da verificare (zona vuota)</div>
+            <div className="muted" style={{ fontWeight: 800 }}>
+              Da verificare (zona vuota)
+            </div>
             <div style={{ fontSize: 28, fontWeight: 900, marginTop: 6 }}>{pct(zoneTotals.ver, zoneTotals.total)}%</div>
-            <div className="muted" style={{ marginTop: 6 }}>{zoneTotals.ver} / {zoneTotals.total}</div>
+            <div className="muted" style={{ marginTop: 6 }}>
+              {zoneTotals.ver} / {zoneTotals.total}
+            </div>
           </div>
         </div>
 
         {/* BARRE COLORATE */}
         <div style={{ marginTop: 16, display: "grid", gap: 10 }}>
           <div>
-            <div className="muted" style={{ fontWeight: 700, marginBottom: 4 }}>OK (assegnato)</div>
+            <div className="muted" style={{ fontWeight: 700, marginBottom: 4 }}>
+              OK (assegnato)
+            </div>
             <div style={{ height: 14, borderRadius: 999, background: "#e5e7eb", overflow: "hidden" }}>
               <div style={{ height: "100%", width: `${pct(zoneTotals.ok, zoneTotals.total)}%`, background: "#16a34a" }} />
             </div>
           </div>
           <div>
-            <div className="muted" style={{ fontWeight: 700, marginBottom: 4 }}>Potenziale (non assegnato)</div>
+            <div className="muted" style={{ fontWeight: 700, marginBottom: 4 }}>
+              Potenziale (non assegnato)
+            </div>
             <div style={{ height: 14, borderRadius: 999, background: "#e5e7eb", overflow: "hidden" }}>
               <div style={{ height: "100%", width: `${pct(zoneTotals.pot, zoneTotals.total)}%`, background: "#facc15" }} />
             </div>
           </div>
           <div>
-            <div className="muted" style={{ fontWeight: 700, marginBottom: 4 }}>Da verificare (zona vuota)</div>
+            <div className="muted" style={{ fontWeight: 700, marginBottom: 4 }}>
+              Da verificare (zona vuota)
+            </div>
             <div style={{ height: 14, borderRadius: 999, background: "#e5e7eb", overflow: "hidden" }}>
               <div style={{ height: "100%", width: `${pct(zoneTotals.ver, zoneTotals.total)}%`, background: "#dc2626" }} />
             </div>
@@ -387,18 +503,32 @@ export default function MonitorMarket({
           <table className="crm-table">
             <thead>
               <tr>
-                <th>Inserzionista</th>
-                <th style={{ textAlign: "right" }}>OK</th>
-                <th style={{ textAlign: "right" }}>Potenziale</th>
-                <th style={{ textAlign: "right" }}>Da verificare</th>
-                <th style={{ textAlign: "right" }}>Totale</th>
-                <th style={{ textAlign: "right" }}>OK %</th>
-                <th style={{ textAlign: "right" }}>Pot %</th>
-                <th style={{ textAlign: "right" }}>Ver %</th>
+                <Th k="adv">Inserzionista</Th>
+                <Th k="ok" alignRight>
+                  OK
+                </Th>
+                <Th k="pot" alignRight>
+                  Potenziale
+                </Th>
+                <Th k="ver" alignRight>
+                  Da verificare
+                </Th>
+                <Th k="total" alignRight>
+                  Totale
+                </Th>
+                <Th k="okPct" alignRight>
+                  OK %
+                </Th>
+                <Th k="potPct" alignRight>
+                  Pot %
+                </Th>
+                <Th k="verPct" alignRight>
+                  Ver %
+                </Th>
               </tr>
             </thead>
             <tbody>
-              {zoneRows.map((r) => (
+              {sortedZoneRows.map((r) => (
                 <tr key={r.adv}>
                   <td style={{ fontWeight: 700 }}>{r.adv}</td>
                   <td style={{ textAlign: "right", fontWeight: 800 }}>{r.ok}</td>
@@ -410,7 +540,7 @@ export default function MonitorMarket({
                   <td style={{ textAlign: "right" }}>{r.verPct}%</td>
                 </tr>
               ))}
-              {!zoneRows.length && (
+              {!sortedZoneRows.length && (
                 <tr>
                   <td colSpan={8} className="muted" style={{ padding: 14 }}>
                     Nessun dato per questa zona.
