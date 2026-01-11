@@ -32,30 +32,6 @@ const toISOStartOfNextDayUTC = (yyyy_mm_dd) => {
   return dt.toISOString();
 };
 
-// ================= MONITOR (TL) helpers =================
-const MONITOR_WEEKS = 12;
-
-const startOfWeekUTC = (d) => {
-  const dt = new Date(d);
-  if (isNaN(dt)) return null;
-  const day = dt.getUTCDay(); // 0=Sun..6=Sat
-  const diff = (day + 6) % 7; // Monday=0
-  dt.setUTCDate(dt.getUTCDate() - diff);
-  dt.setUTCHours(0, 0, 0, 0);
-  return dt;
-};
-
-const weekKeyUTC = (d) => {
-  const w = startOfWeekUTC(d);
-  return w ? w.toISOString().slice(0, 10) : "";
-};
-
-const addWeeksUTC = (isoYmd, weeks) => {
-  const dt = new Date(`${isoYmd}T00:00:00.000Z`);
-  dt.setUTCDate(dt.getUTCDate() + weeks * 7);
-  return dt.toISOString().slice(0, 10);
-};
-
 const downloadCSV = (filename, rows) => {
   const escape = (v) => {
     const s = String(v ?? "");
@@ -98,7 +74,6 @@ const FiltersBar = ({
 }) => {
   return (
     <div style={{ marginTop: 12 }}>
-      {/* riga 1 */}
       <div
         className="filters-bar"
         style={{
@@ -174,7 +149,6 @@ const FiltersBar = ({
         </select>
       </div>
 
-      {/* riga 2: agenzia/privato + bottoni */}
       <div
         style={{
           display: "flex",
@@ -215,11 +189,8 @@ const FiltersBar = ({
         </div>
       </div>
 
-      {/* riga 3: sort */}
       {rightSlot ? (
-        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
-          {rightSlot}
-        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>{rightSlot}</div>
       ) : null}
     </div>
   );
@@ -362,7 +333,12 @@ export default function App() {
   const [agentProfileLoading, setAgentProfileLoading] = useState(true);
   const [agentProfileError, setAgentProfileError] = useState("");
 
-  // agency
+  // agencies list + selected
+  const [agencies, setAgencies] = useState([]); // [{id,name}]
+  const [agenciesLoading, setAgenciesLoading] = useState(true);
+  const [selectedAgencyId, setSelectedAgencyId] = useState(null);
+
+  // agency (selected)
   const [agency, setAgency] = useState(null);
   const [agencyLoading, setAgencyLoading] = useState(true);
 
@@ -408,6 +384,7 @@ export default function App() {
   const [inviteFirstName, setInviteFirstName] = useState("");
   const [inviteLastName, setInviteLastName] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteAgencyId, setInviteAgencyId] = useState("");
   const [inviteLoading, setInviteLoading] = useState(false);
   const [inviteMsg, setInviteMsg] = useState("");
 
@@ -539,21 +516,71 @@ export default function App() {
     loadAgentProfile();
   }, [session?.user?.id, session?.user?.email]);
 
-  /* ================= AGENCY ================= */
+  const isTL = agentProfile?.role === "tl";
+
+  /* ================= AGENCIES LIST (TL can switch) ================= */
+  const loadAgencies = async () => {
+    if (!session?.user?.id) {
+      setAgencies([]);
+      setAgenciesLoading(false);
+      return;
+    }
+
+    setAgenciesLoading(true);
+
+    const { data, error } = await supabase.from("agencies").select("id, name, active").order("created_at", {
+      ascending: false,
+    });
+
+    if (error) {
+      console.error("loadAgencies:", error.message);
+      setAgencies([]);
+      setAgenciesLoading(false);
+      return;
+    }
+
+    const rows = (data || []).filter((a) => a && a.id);
+    setAgencies(rows);
+    setAgenciesLoading(false);
+
+    // initial selection:
+    setSelectedAgencyId((prev) => {
+      if (prev && rows.some((x) => x.id === prev)) return prev;
+
+      const preferred = agentProfile?.agency_id && rows.some((x) => x.id === agentProfile.agency_id) ? agentProfile.agency_id : null;
+      if (preferred) return preferred;
+
+      return rows[0]?.id || null;
+    });
+  };
+
+  useEffect(() => {
+    if (!session?.user?.id) return;
+    // carichiamo agencies solo quando abbiamo profilo
+    if (!agentProfileLoading) loadAgencies();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.user?.id, agentProfileLoading]);
+
+  useEffect(() => {
+    // non-TL: selection fissa sulla sua agency
+    if (!agentProfile?.agency_id) return;
+    if (!isTL) {
+      setSelectedAgencyId(agentProfile.agency_id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentProfile?.agency_id, isTL]);
+
+  /* ================= AGENCY (selected) ================= */
   useEffect(() => {
     const loadAgency = async () => {
-      if (!agentProfile?.agency_id) {
+      if (!selectedAgencyId) {
         setAgency(null);
         setAgencyLoading(false);
         return;
       }
 
       setAgencyLoading(true);
-      const { data, error } = await supabase
-        .from("agencies")
-        .select("*")
-        .eq("id", agentProfile.agency_id)
-        .maybeSingle();
+      const { data, error } = await supabase.from("agencies").select("*").eq("id", selectedAgencyId).maybeSingle();
 
       if (error) {
         console.error("load agency:", error.message);
@@ -567,9 +594,12 @@ export default function App() {
     };
 
     loadAgency();
-  }, [agentProfile?.agency_id]);
+  }, [selectedAgencyId]);
 
-  const isTL = agentProfile?.role === "tl";
+  // Sync invite dropdown default
+  useEffect(() => {
+    if (selectedAgencyId) setInviteAgencyId(selectedAgencyId);
+  }, [selectedAgencyId]);
 
   /* ================= RUNS (legacy, rimane) ================= */
   const loadRuns = async () => {
@@ -810,10 +840,7 @@ export default function App() {
       return;
     }
 
-    const { data: current, error: curErr } = await supabase
-      .from("agency_run_listings")
-      .select("listing_id")
-      .eq("run_id", run.id);
+    const { data: current, error: curErr } = await supabase.from("agency_run_listings").select("listing_id").eq("run_id", run.id);
 
     if (curErr) {
       console.error("load current run listings:", curErr.message);
@@ -821,10 +848,7 @@ export default function App() {
       return;
     }
 
-    const { data: previous, error: prevListErr } = await supabase
-      .from("agency_run_listings")
-      .select("listing_id")
-      .eq("run_id", prevRun.id);
+    const { data: previous, error: prevListErr } = await supabase.from("agency_run_listings").select("listing_id").eq("run_id", prevRun.id);
 
     if (prevListErr) {
       console.error("load previous run listings:", prevListErr.message);
@@ -882,11 +906,7 @@ export default function App() {
     if (!isTL || !agency?.id || !session?.user?.id) return;
 
     if (!agentUserId) {
-      const { error } = await supabase
-        .from("listing_assignments")
-        .delete()
-        .eq("agency_id", agency.id)
-        .eq("listing_id", listingId);
+      const { error } = await supabase.from("listing_assignments").delete().eq("agency_id", agency.id).eq("listing_id", listingId);
 
       if (error) {
         console.error("delete assignment:", error.message);
@@ -1011,17 +1031,9 @@ export default function App() {
 
     let filtered = rows;
 
-    if (f.contractFilter) {
-      filtered = filtered.filter((l) => (getContractName(l) || "") === f.contractFilter);
-    }
-
-    if (f.advertiserFilter) {
-      filtered = filtered.filter((l) => (getAdvertiserLabel(l) || "") === f.advertiserFilter);
-    }
-
-    if (f.agentFilter) {
-      filtered = filtered.filter((l) => (assignMapAll[l.id] || "") === f.agentFilter);
-    }
+    if (f.contractFilter) filtered = filtered.filter((l) => (getContractName(l) || "") === f.contractFilter);
+    if (f.advertiserFilter) filtered = filtered.filter((l) => (getAdvertiserLabel(l) || "") === f.advertiserFilter);
+    if (f.agentFilter) filtered = filtered.filter((l) => (assignMapAll[l.id] || "") === f.agentFilter);
 
     const sortArr = [...filtered];
     const safeTime = (x) => {
@@ -1156,17 +1168,9 @@ export default function App() {
 
     let filtered = rows;
 
-    if (f.contractFilter) {
-      filtered = filtered.filter((l) => (getContractName(l) || "") === f.contractFilter);
-    }
-
-    if (f.advertiserFilter) {
-      filtered = filtered.filter((l) => (getAdvertiserLabel(l) || "") === f.advertiserFilter);
-    }
-
-    if (f.agentFilter) {
-      filtered = filtered.filter((l) => (assignMapAll[l.id] || "") === f.agentFilter);
-    }
+    if (f.contractFilter) filtered = filtered.filter((l) => (getContractName(l) || "") === f.contractFilter);
+    if (f.advertiserFilter) filtered = filtered.filter((l) => (getAdvertiserLabel(l) || "") === f.advertiserFilter);
+    if (f.agentFilter) filtered = filtered.filter((l) => (assignMapAll[l.id] || "") === f.agentFilter);
 
     setTotalCount(filtered.length);
 
@@ -1247,7 +1251,7 @@ export default function App() {
 
   /* ================= TAB AGENTI: INVITA ================= */
   const inviteAgent = async () => {
-    if (!isTL || !agency?.id || !inviteEmail) return;
+    if (!isTL || !inviteAgencyId || !inviteEmail) return;
 
     setInviteLoading(true);
     setInviteMsg("");
@@ -1263,7 +1267,7 @@ export default function App() {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
-          agency_id: agency.id,
+          agency_id: inviteAgencyId,
           email: inviteEmail,
           first_name: inviteFirstName,
           last_name: inviteLastName,
@@ -1278,7 +1282,8 @@ export default function App() {
         setInviteEmail("");
         setInviteFirstName("");
         setInviteLastName("");
-        loadAgencyAgents();
+
+        if (inviteAgencyId === agency?.id) loadAgencyAgents();
       }
     } catch (_e) {
       setInviteMsg("Errore invito");
@@ -1310,7 +1315,7 @@ export default function App() {
     );
   }
 
-  if (agentProfileLoading || agencyLoading) {
+  if (agentProfileLoading || agenciesLoading || agencyLoading) {
     return (
       <div className="card">
         <h2>Dashboard</h2>
@@ -1324,7 +1329,7 @@ export default function App() {
     );
   }
 
-  if (!agentProfile?.agency_id) {
+  if (!agentProfile?.agency_id && !isTL) {
     return (
       <div className="card">
         <h2>Dashboard</h2>
@@ -1338,9 +1343,21 @@ export default function App() {
     );
   }
 
+  if (!agency?.id) {
+    return (
+      <div className="card">
+        <h2>Dashboard</h2>
+        <p className="muted">{session.user.email}</p>
+        <p className="muted">Nessuna agenzia disponibile per questo account.</p>
+        <div className="actions">
+          <button onClick={signOut}>Logout</button>
+        </div>
+      </div>
+    );
+  }
+
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
-  // Drawer derivati
   const dl = detailsListing;
   const dr = dl?.raw || {};
   const portal = dl?.url?.includes("immobiliare") ? "immobiliare.it" : "";
@@ -1354,12 +1371,59 @@ export default function App() {
         <h2>
           Dashboard <span className="muted">{session.user.email}</span>
         </h2>
-        <div style={{ display: "flex", gap: 12 }}>
+
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
           <button onClick={() => setView("dashboard")}>Dashboard</button>
           <button onClick={() => setView("history")}>Annunci</button>
           {isTL && <button onClick={() => setView("team")}>Gestione agenti</button>}
           {isTL && <button onClick={() => setView("agents")}>Agenti</button>}
           {isTL && <button onClick={() => setView("monitor")}>Monitor</button>}
+
+          {/* Dropdown agenzia (solo TL) */}
+          {isTL && agencies.length > 0 && (
+            <div style={{ marginLeft: "auto", display: "flex", gap: 10, alignItems: "center" }}>
+              <div className="muted" style={{ fontWeight: 700 }}>
+                Agenzia
+              </div>
+              <select
+                value={selectedAgencyId || ""}
+                onChange={(e) => {
+                  const v = e.target.value || null;
+                  closeDetails();
+                  setSelectedRun(null);
+                  setNewListingIds(new Set());
+                  setNewListingIds7d(new Set());
+                  setAllRunListings([]);
+                  setAllAgencyListings([]);
+                  setListings([]);
+                  setTotalCount(0);
+                  setPage(0);
+                  setNotesByListing({});
+                  setNotesMetaByListing({});
+                  setAssignByListing({});
+                  setAgentFilter("");
+                  setContractFilter("");
+                  setAdvertiserFilter("");
+                  setPriceMin("");
+                  setPriceMax("");
+                  setAcqFrom("");
+                  setAcqTo("");
+                  setSelectedAgencyId(v);
+                }}
+                style={{ minWidth: 260, padding: "10px 12px", borderRadius: 12 }}
+              >
+                {agencies.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
+
+        <div className="muted" style={{ marginTop: 8, fontWeight: 700 }}>
+          Agenzia selezionata: {agency?.name || "—"}
         </div>
       </div>
 
@@ -1466,7 +1530,7 @@ export default function App() {
         </div>
       )}
 
-      {/* TEAM (solo TL) - ORA IDENTICO AD "ANNUNCI", MA CON ASSEGNAZIONE EDITABILE */}
+      {/* TEAM (solo TL) */}
       {view === "team" && isTL && (
         <div className="card">
           <h3>Gestione agenti</h3>
@@ -1575,10 +1639,23 @@ export default function App() {
           <h3>Agenti</h3>
 
           <div style={{ display: "grid", gap: 8, maxWidth: 420 }}>
+            <select
+              value={inviteAgencyId}
+              onChange={(e) => setInviteAgencyId(e.target.value)}
+              style={{ padding: "10px 12px", borderRadius: 12 }}
+            >
+              {agencies.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+
             <input placeholder="Nome" value={inviteFirstName} onChange={(e) => setInviteFirstName(e.target.value)} />
             <input placeholder="Cognome" value={inviteLastName} onChange={(e) => setInviteLastName(e.target.value)} />
             <input placeholder="Email" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} />
-            <button onClick={inviteAgent} disabled={inviteLoading || !inviteEmail}>
+
+            <button onClick={inviteAgent} disabled={inviteLoading || !inviteEmail || !inviteAgencyId}>
               {inviteLoading ? "Invio..." : "Invia invito"}
             </button>
             {inviteMsg && <div className="muted">{inviteMsg}</div>}
@@ -1587,7 +1664,7 @@ export default function App() {
           <div style={{ marginTop: 18 }}>
             <h4>Team</h4>
             <div className="muted" style={{ marginBottom: 6 }}>
-              (lista dalla tabella agents)
+              (lista dalla tabella agents per l’agenzia selezionata in alto)
             </div>
             <ul>
               {agencyAgents.map((a) => (
