@@ -210,22 +210,45 @@ const ListingsTable = ({
   getAdvertiserLabel,
   newListingIds,
 }) => {
+  const daysOnline = (raw) => {
+    const ts = Number(raw?.creationDate || 0); // unix seconds
+    if (!ts) return null;
+    const nowSec = Date.now() / 1000;
+    const diff = Math.floor((nowSec - ts) / (60 * 60 * 24));
+    return Math.max(0, diff);
+  };
+
+  const thBase = {
+    padding: "8px 10px",
+    fontSize: 13,
+    whiteSpace: "nowrap",
+  };
+
+  const tdBase = {
+    padding: "8px 10px",
+    fontSize: 13,
+    verticalAlign: "top",
+  };
+
   return (
     <div className="table-wrap">
-      <table className="crm-table">
+      <table className="crm-table" style={{ fontSize: 13 }}>
         <thead>
           <tr>
-            <th>Data acquisizione</th>
-            <th>Ultimo aggiornamento</th>
-            <th>Titolo</th>
-            <th>Prezzo</th>
-            <th>Contratto</th>
-            {showAgentColumn && <th>Agente</th>}
-            <th>Agenzia / Privato</th>
-            <th>Via</th>
-            <th>Zona</th>
-            <th>Note</th>
-            <th style={{ textAlign: "right" }}>Azioni</th>
+            <th style={{ ...thBase, width: 120 }}>Data acquisizione</th>
+            <th style={{ ...thBase, width: 130 }}>Ultimo aggiornamento</th>
+            <th style={{ ...thBase, width: 95, textAlign: "right" }} title="Da quanti giorni l'annuncio è online">
+              Online (gg)
+            </th>
+            <th style={{ ...thBase, width: 360, whiteSpace: "normal" }}>Titolo</th>
+            <th style={{ ...thBase, width: 90, textAlign: "right" }}>Prezzo</th>
+            <th style={{ ...thBase, width: 120 }}>Contratto</th>
+            {showAgentColumn && <th style={{ ...thBase, width: 170 }}>Agente</th>}
+            <th style={{ ...thBase, width: 240, whiteSpace: "normal" }}>Agenzia / Privato</th>
+            <th style={{ ...thBase, width: 220, whiteSpace: "normal" }}>Via</th>
+            <th style={{ ...thBase, width: 220, whiteSpace: "normal" }}>Zona</th>
+            <th style={{ ...thBase, width: 220, whiteSpace: "normal" }}>Note</th>
+            <th style={{ ...thBase, width: 110, textAlign: "right" }}>Azioni</th>
           </tr>
         </thead>
         <tbody>
@@ -240,13 +263,17 @@ const ListingsTable = ({
             const assignedEmail = assignedUserId ? agentEmailByUserId?.[assignedUserId] : "";
 
             const isNew = !!newListingIds && newListingIds.has(l.id);
+            const onlineDays = daysOnline(r);
 
             return (
               <tr key={l.id}>
-                <td>{fmtDate(l.first_seen_at)}</td>
-                <td>{fmtDate((r.lastModified || 0) * 1000)}</td>
-                <td>
-                  <div style={{ fontWeight: 600, display: "flex", alignItems: "center", gap: 8 }}>
+                <td style={tdBase}>{fmtDate(l.first_seen_at)}</td>
+                <td style={tdBase}>{fmtDate((r.lastModified || 0) * 1000)}</td>
+                <td style={{ ...tdBase, textAlign: "right", fontWeight: 800 }}>
+                  {onlineDays === null ? <span className="muted">—</span> : onlineDays}
+                </td>
+                <td style={{ ...tdBase, whiteSpace: "normal" }}>
+                  <div style={{ fontWeight: 600, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                     <span>{safe(r.title)}</span>
                     {isNew && (
                       <span
@@ -277,16 +304,16 @@ const ListingsTable = ({
                     )}
                   </div>
                 </td>
-                <td>€ {safe(l.price)}</td>
-                <td>{safe(contractName)}</td>
+                <td style={{ ...tdBase, textAlign: "right", whiteSpace: "nowrap" }}>€ {safe(l.price)}</td>
+                <td style={tdBase}>{safe(contractName)}</td>
 
                 {showAgentColumn && (
-                  <td>
+                  <td style={tdBase}>
                     {agentEditable ? (
                       <select
                         value={assignedUserId}
                         onChange={(e) => onChangeAssignment(l.id, e.target.value)}
-                        style={{ padding: "10px 12px", borderRadius: 12 }}
+                        style={{ padding: "8px 10px", borderRadius: 12, maxWidth: 170 }}
                       >
                         <option value="">—</option>
                         {agencyAgents.map((a) => (
@@ -303,13 +330,13 @@ const ListingsTable = ({
                   </td>
                 )}
 
-                <td>{advLabel}</td>
-                <td>{r?.geography?.street || ""}</td>
-                <td>{r?.analytics?.macrozone || ""}</td>
-                <td>
+                <td style={{ ...tdBase, whiteSpace: "normal" }}>{advLabel}</td>
+                <td style={{ ...tdBase, whiteSpace: "normal" }}>{r?.geography?.street || ""}</td>
+                <td style={{ ...tdBase, whiteSpace: "normal" }}>{r?.analytics?.macrozone || ""}</td>
+                <td style={{ ...tdBase, whiteSpace: "normal" }}>
                   <div className="note-cell">{noteSnippet ? noteSnippet : <span className="muted">—</span>}</div>
                 </td>
-                <td style={{ textAlign: "right" }}>
+                <td style={{ ...tdBase, textAlign: "right" }}>
                   <button className="btn-sm" onClick={() => onOpenDetails(l)}>
                     Vedi dettagli
                   </button>
@@ -869,7 +896,10 @@ export default function App() {
       return;
     }
 
-    const { data: current, error: curErr } = await supabase.from("agency_run_listings").select("listing_id").eq("run_id", run.id);
+    const { data: current, error: curErr } = await supabase
+      .from("agency_run_listings")
+      .select("listing_id")
+      .eq("run_id", run.id);
 
     if (curErr) {
       console.error("load current run listings:", curErr.message);
@@ -877,7 +907,10 @@ export default function App() {
       return;
     }
 
-    const { data: previous, error: prevListErr } = await supabase.from("agency_run_listings").select("listing_id").eq("run_id", prevRun.id);
+    const { data: previous, error: prevListErr } = await supabase
+      .from("agency_run_listings")
+      .select("listing_id")
+      .eq("run_id", prevRun.id);
 
     if (prevListErr) {
       console.error("load previous run listings:", prevListErr.message);
@@ -993,7 +1026,10 @@ export default function App() {
 
     const sortKey = sortOverride || annSort;
 
-    const { data: links, error: linksErr } = await supabase.from("agency_listings").select("listing_id").eq("agency_id", agencyIdAtCall);
+    const { data: links, error: linksErr } = await supabase
+      .from("agency_listings")
+      .select("listing_id")
+      .eq("agency_id", agencyIdAtCall);
 
     // se nel frattempo hai cambiato agenzia, ignora
     if (token !== listingsLoadTokenRef.current || agencyIdAtCall !== agency?.id) return;
@@ -1150,7 +1186,10 @@ export default function App() {
         advertiserFilter,
       });
 
-    const { data: links, error: linksErr } = await supabase.from("agency_run_listings").select("listing_id").eq("run_id", run.id);
+    const { data: links, error: linksErr } = await supabase
+      .from("agency_run_listings")
+      .select("listing_id")
+      .eq("run_id", run.id);
 
     if (linksErr || !links?.length) {
       setListings([]);
@@ -1164,7 +1203,11 @@ export default function App() {
 
     const ids = links.map((l) => l.listing_id);
 
-    let q = supabase.from("listings").select("id, price, url, raw, first_seen_at").in("id", ids).order("price", { ascending: true });
+    let q = supabase
+      .from("listings")
+      .select("id, price, url, raw, first_seen_at")
+      .in("id", ids)
+      .order("price", { ascending: true });
 
     if (f.priceMin) q = q.gte("price", Number(f.priceMin));
     if (f.priceMax) q = q.lte("price", Number(f.priceMax));
