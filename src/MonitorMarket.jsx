@@ -152,10 +152,12 @@ const fmtMoney = (v) => {
   return new Intl.NumberFormat("it-IT").format(Math.round(n));
 };
 
+// 2025-12 -> 12/25
 const fmtMonthLabel = (ym) => {
   const [y, m] = String(ym || "").split("-");
   if (!y || !m) return ym || "";
-  return `${m}/${y}`;
+  const yy = String(y).slice(2);
+  return `${m}/${yy}`;
 };
 
 // ===== Vertical bar chart (SVG) =====
@@ -166,7 +168,7 @@ const VerticalBars = ({ title, subtitle, data, valueKey, labelKey = "month", hei
   const padL = 52;
   const padR = 16;
   const padT = 16;
-  const padB = 46;
+  const padB = 62; // più spazio per label “staccate”
 
   const valuesRaw = (data || [])
     .map((d) => Number(d?.[valueKey] || 0))
@@ -182,14 +184,14 @@ const VerticalBars = ({ title, subtitle, data, valueKey, labelKey = "month", hei
 
   const n = (data || []).length;
 
-  // barre piccole: cap bar width e spazio fisso
-  const gap = 14;
-  const MAX_BAR_W = 26;
-  const MIN_BAR_W = 10;
+  // barre piccole + più distanza tra mesi
+  const gap = 22;
+  const MAX_BAR_W = 28;
+  const MIN_BAR_W = 12;
   const computed = n > 0 ? Math.floor((innerW - gap * (n - 1)) / n) : MIN_BAR_W;
   const barW = Math.max(MIN_BAR_W, Math.min(MAX_BAR_W, computed));
 
-  // allineamento a sinistra (no centratura)
+  // allineamento a sinistra
   const startX = padL;
 
   const yTicks = maxV > 0 ? [0, 0.25, 0.5, 0.75, 1].map((p) => Math.round(maxV * p)) : [0];
@@ -245,30 +247,26 @@ const VerticalBars = ({ title, subtitle, data, valueKey, labelKey = "month", hei
               const COLORS = ["#2563eb", "#16a34a", "#f59e0b", "#dc2626", "#7c3aed", "#0ea5e9"];
               const barColor = COLORS[idx % COLORS.length];
 
-              const TOP_R = 10;
-              const capH = Math.min(h, 18);
+              const labelY = padT + innerH + 26 + (idx % 2) * 14; // “stacca” le date
 
               return (
                 <g key={`bar-${idx}`}>
-                  {/* parte superiore arrotondata */}
+                  {/* barra con radius completo */}
                   {h > 0 && (
-                    <rect x={x} y={y} width={barW} height={capH} rx={TOP_R} ry={TOP_R} fill={barColor}>
+                    <rect x={x} y={y} width={barW} height={h} rx="10" ry="10" fill={barColor}>
                       <title>{tooltip}</title>
                     </rect>
                   )}
 
-                  {/* parte sotto squadrata */}
-                  {h > 18 && <rect x={x} y={y + 18} width={barW} height={h - 18} rx="0" ry="0" fill={barColor} />}
-
-                  {/* valore sopra la barra (solo se c’è spazio) */}
-                  {h > 18 && (
+                  {/* valore sopra la barra */}
+                  {h > 8 && (
                     <text x={x + barW / 2} y={y - 6} textAnchor="middle" fontSize="11" fill="#6b7280">
                       {yFormatter ? yFormatter(v) : v}
                     </text>
                   )}
 
-                  {/* X labels */}
-                  <text x={x + barW / 2} y={padT + innerH + 26} textAnchor="middle" fontSize="11" fill="#6b7280">
+                  {/* X labels (stagger) */}
+                  <text x={x + barW / 2} y={labelY} textAnchor="middle" fontSize="11" fill="#6b7280">
                     {label}
                   </text>
                 </g>
@@ -475,7 +473,6 @@ export default function MonitorMarket({ supabase, agencyId, isTL, agentEmailByUs
       setZone(z);
 
       const inZone = z ? (all || []).filter((x) => String(x?.raw?.analytics?.macrozone || "").trim() === z) : [];
-
       setZoneListings(inZone);
 
       const byAdv = new Map();
@@ -523,11 +520,10 @@ export default function MonitorMarket({ supabase, agencyId, isTL, agentEmailByUs
           okPct: pct(r.ok, r.total),
           potPct: pct(r.pot, r.total),
           verPct: pct(r.ver, r.total),
-          penPct: pct(r.total, zoneTotal), // penetrazione: quota sul totale zona
+          penPct: pct(r.total, zoneTotal),
         }))
       );
 
-      // reset sort default (mantiene comportamento vecchio)
       setAdvSortKey("total");
       setAdvSortDir("desc");
     } catch (e) {
@@ -621,7 +617,7 @@ export default function MonitorMarket({ supabase, agencyId, isTL, agentEmailByUs
       bucket.set(ym, cur);
     }
 
-    const out = Array.from(bucket.values())
+    return Array.from(bucket.values())
       .map((b) => ({
         month: b.month,
         medianPrice: median(b.prices),
@@ -630,8 +626,6 @@ export default function MonitorMarket({ supabase, agencyId, isTL, agentEmailByUs
       }))
       .filter((r) => r.medianPrice !== null)
       .sort((a, b) => String(a.month).localeCompare(String(b.month)));
-
-    return out;
   }, [zoneListings]);
 
   if (!isTL) return null;
