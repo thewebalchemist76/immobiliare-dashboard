@@ -247,7 +247,7 @@ const VerticalBars = ({ title, subtitle, data, valueKey, labelKey = "month", hei
               const COLORS = ["#2563eb", "#16a34a", "#f59e0b", "#dc2626", "#7c3aed", "#0ea5e9"];
               const barColor = COLORS[idx % COLORS.length];
 
-              const labelY = padT + innerH + 26 + (idx % 2) * 14; // “stacca” le date
+              const labelY = padT + innerH + 32;
 
               return (
                 <g key={`bar-${idx}`}>
