@@ -153,37 +153,44 @@ const fmtMoney = (v) => {
 };
 
 const fmtMonthLabel = (ym) => {
-  // ym: "YYYY-MM"
   const [y, m] = String(ym || "").split("-");
   if (!y || !m) return ym || "";
   return `${m}/${y}`;
 };
 
-const VerticalBars = ({
-  title,
-  subtitle,
-  data,
-  valueKey,
-  labelKey = "month",
-  height = 260,
-  yFormatter,
-}) => {
+// ===== Vertical bar chart (SVG) =====
+const VerticalBars = ({ title, subtitle, data, valueKey, labelKey = "month", height = 220, yFormatter }) => {
   const W = 900;
   const H = height;
-  const padL = 46;
-  const padR = 16;
-  const padT = 18;
-  const padB = 42;
 
-  const values = (data || []).map((d) => Number(d?.[valueKey] || 0)).filter((x) => Number.isFinite(x) && x > 0);
-  const maxV = values.length ? Math.max(...values) : 0;
+  const padL = 52;
+  const padR = 16;
+  const padT = 16;
+  const padB = 46;
+
+  const valuesRaw = (data || [])
+    .map((d) => Number(d?.[valueKey] || 0))
+    .filter((x) => Number.isFinite(x) && x > 0);
+
+  const rawMax = valuesRaw.length ? Math.max(...valuesRaw) : 0;
+
+  // headroom per non avere “muro pieno” quando c’è 1 mese o tutti uguali
+  const maxV = rawMax > 0 ? rawMax * 1.15 : 0;
 
   const innerW = W - padL - padR;
   const innerH = H - padT - padB;
 
   const n = (data || []).length;
-  const gap = 10;
-  const barW = n > 0 ? Math.max(10, Math.floor((innerW - gap * (n - 1)) / n)) : 10;
+
+  // barre piccole come screenshot: cap bar width e spazio fisso
+  const gap = 14;
+  const MAX_BAR_W = 26;
+  const MIN_BAR_W = 10;
+  const computed = n > 0 ? Math.floor((innerW - gap * (n - 1)) / n) : MIN_BAR_W;
+  const barW = Math.max(MIN_BAR_W, Math.min(MAX_BAR_W, computed));
+
+  const totalBarsW = n > 0 ? n * barW + (n - 1) * gap : 0;
+  const startX = padL + Math.max(0, Math.floor((innerW - totalBarsW) / 2));
 
   const yTicks = maxV > 0 ? [0, 0.25, 0.5, 0.75, 1].map((p) => Math.round(maxV * p)) : [0];
 
@@ -196,7 +203,7 @@ const VerticalBars = ({
         </div>
       </div>
 
-      {!n || !maxV ? (
+      {!n || !rawMax ? (
         <div className="muted" style={{ marginTop: 10 }}>
           Nessun dato per grafico.
         </div>
@@ -215,7 +222,7 @@ const VerticalBars = ({
               return (
                 <g key={`yt-${i}`}>
                   <line x1={padL} x2={W - padR} y1={y} y2={y} stroke="#e5e7eb" strokeWidth="1" />
-                  <text x={padL - 8} y={y + 4} textAnchor="end" fontSize="11" fill="#6b7280">
+                  <text x={padL - 10} y={y + 4} textAnchor="end" fontSize="11" fill="#6b7280">
                     {yFormatter ? yFormatter(tv) : tv}
                   </text>
                 </g>
@@ -228,7 +235,7 @@ const VerticalBars = ({
             {/* Bars */}
             {data.map((d, idx) => {
               const v = Number(d?.[valueKey] || 0);
-              const x = padL + idx * (barW + gap);
+              const x = startX + idx * (barW + gap);
               const h = maxV ? (Math.max(0, v) / maxV) * innerH : 0;
               const y = padT + innerH - h;
 
@@ -237,14 +244,27 @@ const VerticalBars = ({
 
               return (
                 <g key={`bar-${idx}`}>
-                  <rect x={x} y={y} width={barW} height={h} rx="8" ry="8" fill="#111827">
+                  <rect x={x} y={y} width={barW} height={h} rx="10" ry="10" fill="#111827">
                     <title>{tooltip}</title>
                   </rect>
 
-                  {/* X labels (every bar, compact) */}
+                  {/* valore sopra la barra (solo se c’è spazio) */}
+                  {h > 18 && (
+                    <text
+                      x={x + barW / 2}
+                      y={y - 6}
+                      textAnchor="middle"
+                      fontSize="11"
+                      fill="#6b7280"
+                    >
+                      {yFormatter ? yFormatter(v) : v}
+                    </text>
+                  )}
+
+                  {/* X labels */}
                   <text
                     x={x + barW / 2}
-                    y={padT + innerH + 24}
+                    y={padT + innerH + 26}
                     textAnchor="middle"
                     fontSize="11"
                     fill="#6b7280"
@@ -287,7 +307,6 @@ export default function MonitorMarket({ supabase, agencyId, isTL, agentEmailByUs
   const [zoneListings, setZoneListings] = useState([]);
 
   // ================= SORT (Inserzionisti) =================
-  // default: Totale desc (come prima)
   const [advSortKey, setAdvSortKey] = useState("total"); // adv | ok | pot | ver | total | okPct | potPct | verPct | penPct
   const [advSortDir, setAdvSortDir] = useState("desc"); // asc | desc
 
@@ -456,7 +475,6 @@ export default function MonitorMarket({ supabase, agencyId, isTL, agentEmailByUs
 
       const inZone = z ? (all || []).filter((x) => String(x?.raw?.analytics?.macrozone || "").trim() === z) : [];
 
-      // salva anche per grafici prezzo
       setZoneListings(inZone);
 
       const byAdv = new Map();
@@ -504,11 +522,10 @@ export default function MonitorMarket({ supabase, agencyId, isTL, agentEmailByUs
           okPct: pct(r.ok, r.total),
           potPct: pct(r.pot, r.total),
           verPct: pct(r.ver, r.total),
-          penPct: pct(r.total, zoneTotal), // penetrazione: quota sul totale zona
+          penPct: pct(r.total, zoneTotal),
         }))
       );
 
-      // reset sort default (mantiene comportamento vecchio)
       setAdvSortKey("total");
       setAdvSortDir("desc");
     } catch (e) {
@@ -548,7 +565,6 @@ export default function MonitorMarket({ supabase, agencyId, isTL, agentEmailByUs
 
   const weeklyMax = useMemo(() => Math.max(0, ...(weekly || []).map((x) => Number(x.newCount || 0))), [weekly]);
 
-  // ===== Pie + Top10 data =====
   const pieAndTop = useMemo(() => {
     const zoneTotal = Number(zoneTotals?.total || 0);
     const base = [...(zoneRows || [])].sort((a, b) => Number(b.total || 0) - Number(a.total || 0));
@@ -583,9 +599,8 @@ export default function MonitorMarket({ supabase, agencyId, isTL, agentEmailByUs
     return { slices, top10 };
   }, [zoneRows, zoneTotals?.total]);
 
-  // ===== Prezzi: mediana per mese (prezzo e €/mq) =====
   const priceMonthly = useMemo(() => {
-    const bucket = new Map(); // ym -> { prices: [], eurMq: [] }
+    const bucket = new Map();
 
     for (const x of zoneListings || []) {
       const ym = monthKeyUTCFromTs(x?.first_seen_at);
@@ -906,14 +921,7 @@ export default function MonitorMarket({ supabase, agencyId, isTL, agentEmailByUs
                     >
                       {s.label}
                     </div>
-                    <div
-                      className="muted"
-                      style={{
-                        textAlign: "right",
-                        fontWeight: 800,
-                        whiteSpace: "nowrap",
-                      }}
-                    >
+                    <div className="muted" style={{ textAlign: "right", fontWeight: 800, whiteSpace: "nowrap" }}>
                       {pct(s.value, zoneTotals.total)}%
                     </div>
                   </div>
@@ -962,7 +970,7 @@ export default function MonitorMarket({ supabase, agencyId, isTL, agentEmailByUs
           </div>
         </div>
 
-        {/* ===== NUOVI GRAFICI: PREZZI PER MESE (MEDIANA) ===== */}
+        {/* ===== PREZZI PER MESE ===== */}
         <div style={{ marginTop: 18 }}>
           <div className="muted" style={{ fontWeight: 800, marginBottom: 10 }}>
             Prezzi per mese (zona selezionata)
@@ -975,18 +983,16 @@ export default function MonitorMarket({ supabase, agencyId, isTL, agentEmailByUs
               data={priceMonthly.filter((r) => Number.isFinite(r.medianPrice) && r.medianPrice > 0)}
               valueKey="medianPrice"
               yFormatter={(v) => fmtMoney(v)}
-              height={280}
+              height={200}
             />
 
             <VerticalBars
               title="€/m² (mediana) per mese"
               subtitle={`Zona: ${zone || "—"} (solo annunci con m²)`}
-              data={priceMonthly
-                .filter((r) => Number.isFinite(r.medianEurMq) && r.medianEurMq > 0)
-                .map((r) => ({ ...r, medianEurMq: r.medianEurMq }))}
+              data={priceMonthly.filter((r) => Number.isFinite(r.medianEurMq) && r.medianEurMq > 0)}
               valueKey="medianEurMq"
               yFormatter={(v) => fmtMoney(v)}
-              height={280}
+              height={200}
             />
           </div>
 
