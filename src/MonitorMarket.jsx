@@ -182,15 +182,15 @@ const VerticalBars = ({ title, subtitle, data, valueKey, labelKey = "month", hei
 
   const n = (data || []).length;
 
-  // barre piccole come screenshot: cap bar width e spazio fisso
+  // barre piccole: cap bar width e spazio fisso
   const gap = 14;
   const MAX_BAR_W = 26;
   const MIN_BAR_W = 10;
   const computed = n > 0 ? Math.floor((innerW - gap * (n - 1)) / n) : MIN_BAR_W;
   const barW = Math.max(MIN_BAR_W, Math.min(MAX_BAR_W, computed));
 
-  const totalBarsW = n > 0 ? n * barW + (n - 1) * gap : 0;
-  const startX = padL + Math.max(0, Math.floor((innerW - totalBarsW) / 2));
+  // allineamento a sinistra (no centratura)
+  const startX = padL;
 
   const yTicks = maxV > 0 ? [0, 0.25, 0.5, 0.75, 1].map((p) => Math.round(maxV * p)) : [0];
 
@@ -242,33 +242,33 @@ const VerticalBars = ({ title, subtitle, data, valueKey, labelKey = "month", hei
               const label = fmtMonthLabel(d?.[labelKey]);
               const tooltip = `${label}: ${yFormatter ? yFormatter(v) : v}`;
 
+              const COLORS = ["#2563eb", "#16a34a", "#f59e0b", "#dc2626", "#7c3aed", "#0ea5e9"];
+              const barColor = COLORS[idx % COLORS.length];
+
+              const TOP_R = 10;
+              const capH = Math.min(h, 18);
+
               return (
                 <g key={`bar-${idx}`}>
-                  <rect x={x} y={y} width={barW} height={h} rx="10" ry="10" fill="#111827">
-                    <title>{tooltip}</title>
-                  </rect>
+                  {/* parte superiore arrotondata */}
+                  {h > 0 && (
+                    <rect x={x} y={y} width={barW} height={capH} rx={TOP_R} ry={TOP_R} fill={barColor}>
+                      <title>{tooltip}</title>
+                    </rect>
+                  )}
+
+                  {/* parte sotto squadrata */}
+                  {h > 18 && <rect x={x} y={y + 18} width={barW} height={h - 18} rx="0" ry="0" fill={barColor} />}
 
                   {/* valore sopra la barra (solo se c’è spazio) */}
                   {h > 18 && (
-                    <text
-                      x={x + barW / 2}
-                      y={y - 6}
-                      textAnchor="middle"
-                      fontSize="11"
-                      fill="#6b7280"
-                    >
+                    <text x={x + barW / 2} y={y - 6} textAnchor="middle" fontSize="11" fill="#6b7280">
                       {yFormatter ? yFormatter(v) : v}
                     </text>
                   )}
 
                   {/* X labels */}
-                  <text
-                    x={x + barW / 2}
-                    y={padT + innerH + 26}
-                    textAnchor="middle"
-                    fontSize="11"
-                    fill="#6b7280"
-                  >
+                  <text x={x + barW / 2} y={padT + innerH + 26} textAnchor="middle" fontSize="11" fill="#6b7280">
                     {label}
                   </text>
                 </g>
@@ -307,6 +307,7 @@ export default function MonitorMarket({ supabase, agencyId, isTL, agentEmailByUs
   const [zoneListings, setZoneListings] = useState([]);
 
   // ================= SORT (Inserzionisti) =================
+  // default: Totale desc (come prima)
   const [advSortKey, setAdvSortKey] = useState("total"); // adv | ok | pot | ver | total | okPct | potPct | verPct | penPct
   const [advSortDir, setAdvSortDir] = useState("desc"); // asc | desc
 
@@ -522,10 +523,11 @@ export default function MonitorMarket({ supabase, agencyId, isTL, agentEmailByUs
           okPct: pct(r.ok, r.total),
           potPct: pct(r.pot, r.total),
           verPct: pct(r.ver, r.total),
-          penPct: pct(r.total, zoneTotal),
+          penPct: pct(r.total, zoneTotal), // penetrazione: quota sul totale zona
         }))
       );
 
+      // reset sort default (mantiene comportamento vecchio)
       setAdvSortKey("total");
       setAdvSortDir("desc");
     } catch (e) {
@@ -565,6 +567,7 @@ export default function MonitorMarket({ supabase, agencyId, isTL, agentEmailByUs
 
   const weeklyMax = useMemo(() => Math.max(0, ...(weekly || []).map((x) => Number(x.newCount || 0))), [weekly]);
 
+  // ===== Pie + Top10 data =====
   const pieAndTop = useMemo(() => {
     const zoneTotal = Number(zoneTotals?.total || 0);
     const base = [...(zoneRows || [])].sort((a, b) => Number(b.total || 0) - Number(a.total || 0));
