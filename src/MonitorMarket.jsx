@@ -129,6 +129,142 @@ const PieChart = ({ slices, size = 240 }) => {
   );
 };
 
+// ===== Median + Month helpers (no libs) =====
+const median = (arr) => {
+  const a = (arr || []).map((x) => Number(x)).filter((x) => Number.isFinite(x));
+  if (!a.length) return null;
+  a.sort((x, y) => x - y);
+  const mid = Math.floor(a.length / 2);
+  if (a.length % 2 === 1) return a[mid];
+  return (a[mid - 1] + a[mid]) / 2;
+};
+
+const monthKeyUTCFromTs = (ts) => {
+  if (!ts) return "";
+  const dt = new Date(ts);
+  if (isNaN(dt)) return "";
+  return dt.toISOString().slice(0, 7); // YYYY-MM
+};
+
+const fmtMoney = (v) => {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return "—";
+  return new Intl.NumberFormat("it-IT").format(Math.round(n));
+};
+
+const fmtMonthLabel = (ym) => {
+  // ym: "YYYY-MM"
+  const [y, m] = String(ym || "").split("-");
+  if (!y || !m) return ym || "";
+  return `${m}/${y}`;
+};
+
+const VerticalBars = ({
+  title,
+  subtitle,
+  data,
+  valueKey,
+  labelKey = "month",
+  height = 260,
+  yFormatter,
+}) => {
+  const W = 900;
+  const H = height;
+  const padL = 46;
+  const padR = 16;
+  const padT = 18;
+  const padB = 42;
+
+  const values = (data || []).map((d) => Number(d?.[valueKey] || 0)).filter((x) => Number.isFinite(x) && x > 0);
+  const maxV = values.length ? Math.max(...values) : 0;
+
+  const innerW = W - padL - padR;
+  const innerH = H - padT - padB;
+
+  const n = (data || []).length;
+  const gap = 10;
+  const barW = n > 0 ? Math.max(10, Math.floor((innerW - gap * (n - 1)) / n)) : 10;
+
+  const yTicks = maxV > 0 ? [0, 0.25, 0.5, 0.75, 1].map((p) => Math.round(maxV * p)) : [0];
+
+  return (
+    <div className="card" style={{ background: "rgba(255,255,255,0.6)" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
+        <div style={{ fontWeight: 900 }}>{title}</div>
+        <div className="muted" style={{ fontWeight: 700 }}>
+          {subtitle || ""}
+        </div>
+      </div>
+
+      {!n || !maxV ? (
+        <div className="muted" style={{ marginTop: 10 }}>
+          Nessun dato per grafico.
+        </div>
+      ) : (
+        <div style={{ marginTop: 10, width: "100%", overflowX: "auto" }}>
+          <svg
+            width="100%"
+            viewBox={`0 0 ${W} ${H}`}
+            role="img"
+            aria-label={title}
+            style={{ display: "block", minWidth: 640 }}
+          >
+            {/* Y grid + labels */}
+            {yTicks.map((tv, i) => {
+              const y = padT + innerH - (maxV ? (tv / maxV) * innerH : 0);
+              return (
+                <g key={`yt-${i}`}>
+                  <line x1={padL} x2={W - padR} y1={y} y2={y} stroke="#e5e7eb" strokeWidth="1" />
+                  <text x={padL - 8} y={y + 4} textAnchor="end" fontSize="11" fill="#6b7280">
+                    {yFormatter ? yFormatter(tv) : tv}
+                  </text>
+                </g>
+              );
+            })}
+
+            {/* X axis */}
+            <line x1={padL} x2={W - padR} y1={padT + innerH} y2={padT + innerH} stroke="#9ca3af" strokeWidth="1" />
+
+            {/* Bars */}
+            {data.map((d, idx) => {
+              const v = Number(d?.[valueKey] || 0);
+              const x = padL + idx * (barW + gap);
+              const h = maxV ? (Math.max(0, v) / maxV) * innerH : 0;
+              const y = padT + innerH - h;
+
+              const label = fmtMonthLabel(d?.[labelKey]);
+              const tooltip = `${label}: ${yFormatter ? yFormatter(v) : v}`;
+
+              return (
+                <g key={`bar-${idx}`}>
+                  <rect x={x} y={y} width={barW} height={h} rx="8" ry="8" fill="#111827">
+                    <title>{tooltip}</title>
+                  </rect>
+
+                  {/* X labels (every bar, compact) */}
+                  <text
+                    x={x + barW / 2}
+                    y={padT + innerH + 24}
+                    textAnchor="middle"
+                    fontSize="11"
+                    fill="#6b7280"
+                  >
+                    {label}
+                  </text>
+                </g>
+              );
+            })}
+          </svg>
+        </div>
+      )}
+
+      <div className="muted" style={{ marginTop: 8, fontWeight: 600 }}>
+        (mediana mensile)
+      </div>
+    </div>
+  );
+};
+
 export default function MonitorMarket({ supabase, agencyId, isTL, agentEmailByUserId, getAdvertiserLabel }) {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
@@ -146,6 +282,9 @@ export default function MonitorMarket({ supabase, agencyId, isTL, agentEmailByUs
     total: 0,
     advCounts: [],
   });
+
+  // ===== listings della zona (per grafici prezzo) =====
+  const [zoneListings, setZoneListings] = useState([]);
 
   // ================= SORT (Inserzionisti) =================
   // default: Totale desc (come prima)
@@ -289,10 +428,11 @@ export default function MonitorMarket({ supabase, agencyId, isTL, agentEmailByUs
         setZone("");
         setZoneRows([]);
         setZoneTotals({ ok: 0, pot: 0, ver: 0, total: 0, advCounts: [] });
+        setZoneListings([]);
         return;
       }
 
-      const { data: all } = await supabase.from("listings").select("id, raw").in("id", ids);
+      const { data: all } = await supabase.from("listings").select("id, raw, price, first_seen_at").in("id", ids);
 
       const { data: asg } = await supabase
         .from("listing_assignments")
@@ -315,6 +455,9 @@ export default function MonitorMarket({ supabase, agencyId, isTL, agentEmailByUs
       setZone(z);
 
       const inZone = z ? (all || []).filter((x) => String(x?.raw?.analytics?.macrozone || "").trim() === z) : [];
+
+      // salva anche per grafici prezzo
+      setZoneListings(inZone);
 
       const byAdv = new Map();
       let ok = 0,
@@ -439,6 +582,39 @@ export default function MonitorMarket({ supabase, agencyId, isTL, agentEmailByUs
 
     return { slices, top10 };
   }, [zoneRows, zoneTotals?.total]);
+
+  // ===== Prezzi: mediana per mese (prezzo e €/mq) =====
+  const priceMonthly = useMemo(() => {
+    const bucket = new Map(); // ym -> { prices: [], eurMq: [] }
+
+    for (const x of zoneListings || []) {
+      const ym = monthKeyUTCFromTs(x?.first_seen_at);
+      if (!ym) continue;
+
+      const p = Number(x?.price ?? x?.raw?.price?.raw);
+      if (!Number.isFinite(p) || p <= 0) continue;
+
+      const sqm = Number(x?.raw?.topology?.surface?.size);
+      const eurMq = Number.isFinite(sqm) && sqm > 0 ? p / sqm : null;
+
+      const cur = bucket.get(ym) || { month: ym, prices: [], eurMq: [] };
+      cur.prices.push(p);
+      if (eurMq && Number.isFinite(eurMq) && eurMq > 0) cur.eurMq.push(eurMq);
+      bucket.set(ym, cur);
+    }
+
+    const out = Array.from(bucket.values())
+      .map((b) => ({
+        month: b.month,
+        medianPrice: median(b.prices),
+        medianEurMq: b.eurMq.length ? median(b.eurMq) : null,
+        n: (b.prices || []).length,
+      }))
+      .filter((r) => r.medianPrice !== null)
+      .sort((a, b) => String(a.month).localeCompare(String(b.month)));
+
+    return out;
+  }, [zoneListings]);
 
   if (!isTL) return null;
 
@@ -696,7 +872,7 @@ export default function MonitorMarket({ supabase, agencyId, isTL, agentEmailByUs
                 <PieChart slices={pieAndTop.slices} size={260} />
               </div>
 
-                            <div
+              <div
                 style={{
                   marginTop: 10,
                   display: "grid",
@@ -744,7 +920,6 @@ export default function MonitorMarket({ supabase, agencyId, isTL, agentEmailByUs
                 ))}
               </div>
 
-
               <div className="muted" style={{ marginTop: 10 }}>
                 (pie: top 12 + “Altri”)
               </div>
@@ -784,6 +959,39 @@ export default function MonitorMarket({ supabase, agencyId, isTL, agentEmailByUs
                 </table>
               </div>
             </div>
+          </div>
+        </div>
+
+        {/* ===== NUOVI GRAFICI: PREZZI PER MESE (MEDIANA) ===== */}
+        <div style={{ marginTop: 18 }}>
+          <div className="muted" style={{ fontWeight: 800, marginBottom: 10 }}>
+            Prezzi per mese (zona selezionata)
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 16 }}>
+            <VerticalBars
+              title="Prezzo (mediana) per mese"
+              subtitle={`Zona: ${zone || "—"}`}
+              data={priceMonthly.filter((r) => Number.isFinite(r.medianPrice) && r.medianPrice > 0)}
+              valueKey="medianPrice"
+              yFormatter={(v) => fmtMoney(v)}
+              height={280}
+            />
+
+            <VerticalBars
+              title="€/m² (mediana) per mese"
+              subtitle={`Zona: ${zone || "—"} (solo annunci con m²)`}
+              data={priceMonthly
+                .filter((r) => Number.isFinite(r.medianEurMq) && r.medianEurMq > 0)
+                .map((r) => ({ ...r, medianEurMq: r.medianEurMq }))}
+              valueKey="medianEurMq"
+              yFormatter={(v) => fmtMoney(v)}
+              height={280}
+            />
+          </div>
+
+          <div className="muted" style={{ marginTop: 10, fontWeight: 600 }}>
+            Nota: mese calcolato da <b>first_seen_at</b>. Tooltip passando il mouse sulle barre.
           </div>
         </div>
 
