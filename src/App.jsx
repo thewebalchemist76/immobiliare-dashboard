@@ -791,7 +791,8 @@ export default function App() {
 
   /* ================= AGENCY AGENTS ================= */
   const loadAgencyAgents = async () => {
-    if (!agency?.id) {
+    const targetAgencyId = inviteAgencyId || agency?.id;
+    if (!targetAgencyId) {
       setAgencyAgents([]);
       return;
     }
@@ -799,7 +800,7 @@ export default function App() {
     const { data, error } = await supabase
       .from("agents")
       .select("id, user_id, email, role")
-      .eq("agency_id", agency.id)
+      .eq("agency_id", targetAgencyId)
       .order("role", { ascending: true })
       .order("email", { ascending: true });
 
@@ -821,8 +822,8 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (agency?.id) loadAgencyAgents();
-  }, [agency?.id]);
+    if (inviteAgencyId || agency?.id) loadAgencyAgents();
+  }, [inviteAgencyId, agency?.id]);
 
   const agentEmailByUserId = useMemo(() => {
     return (agencyAgents || []).reduce((acc, a) => {
