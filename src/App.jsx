@@ -1358,9 +1358,18 @@ export default function App() {
         }),
       });
 
-      const json = await res.json();
+      const raw = await res.text();
+      let json = null;
+      try {
+        json = raw ? JSON.parse(raw) : null;
+      } catch (_e) {
+        json = null;
+      }
+
       if (!res.ok) {
-        setInviteMsg(json?.error || "Errore invito");
+        const errVal = json?.error ?? raw ?? "Errore invito";
+        const errMsg = typeof errVal === "string" ? errVal : JSON.stringify(errVal);
+        setInviteMsg(errMsg || "Errore invito");
       } else {
         setInviteMsg("Invito inviato.");
         setInviteEmail("");
