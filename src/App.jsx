@@ -423,6 +423,7 @@ export default function App() {
   const [inviteFirstName, setInviteFirstName] = useState("");
   const [inviteLastName, setInviteLastName] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState("agent");
   const [inviteAgencyId, setInviteAgencyId] = useState("");
   const [inviteLoading, setInviteLoading] = useState(false);
   const [inviteMsg, setInviteMsg] = useState("");
@@ -1355,6 +1356,7 @@ export default function App() {
           email: inviteEmail,
           first_name: inviteFirstName,
           last_name: inviteLastName,
+          role: inviteRole,
         }),
       });
 
@@ -1375,6 +1377,7 @@ export default function App() {
         setInviteEmail("");
         setInviteFirstName("");
         setInviteLastName("");
+        setInviteRole("agent");
 
         if (inviteAgencyId === agency?.id) loadAgencyAgents();
       }
@@ -1727,6 +1730,15 @@ export default function App() {
                   {a.name}
                 </option>
               ))}
+            </select>
+
+            <select
+              value={inviteRole}
+              onChange={(e) => setInviteRole(e.target.value)}
+              style={{ padding: "10px 12px", borderRadius: 12 }}
+            >
+              <option value="agent">Agente</option>
+              <option value="tl">Team leader</option>
             </select>
 
             <input placeholder="Nome" value={inviteFirstName} onChange={(e) => setInviteFirstName(e.target.value)} />
