@@ -1755,7 +1755,7 @@ export default function App() {
           <div style={{ marginTop: 18 }}>
             <h4>Team</h4>
             <div className="muted" style={{ marginBottom: 6 }}>
-              (lista dalla tabella agents per l’agenzia selezionata in alto)
+              (lista dalla tabella agents per l’agenzia selezionata nel form invito)
             </div>
             <ul>
               {agencyAgents.map((a) => (
